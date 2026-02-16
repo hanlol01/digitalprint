@@ -1,7 +1,7 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, ShoppingCart, ClipboardList, Package, Users, 
-  Warehouse, Calculator, Settings, Printer, ChevronLeft, Menu
+  Warehouse, Calculator, FileText, Printer, ChevronLeft, Menu
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -13,6 +13,7 @@ const navItems = [
   { to: '/customers', icon: Users, label: 'Pelanggan' },
   { to: '/materials', icon: Warehouse, label: 'Stok Bahan' },
   { to: '/calculator', icon: Calculator, label: 'Kalkulator Harga' },
+  { to: '/reports', icon: FileText, label: 'Laporan Keuangan' },
 ];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
