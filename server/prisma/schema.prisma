@@ -1,0 +1,297 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PricingUnit {
+  per_lembar
+  per_meter
+  per_cm
+  per_pcs
+
+  @@map("satuan_harga_enum")
+}
+
+enum OrderStatus {
+  menunggu_desain
+  proses_cetak
+  finishing
+  selesai
+  sudah_diambil
+
+  @@map("status_pesanan_enum")
+}
+
+enum PaymentMethod {
+  cash
+  transfer
+  qris
+  piutang
+
+  @@map("metode_pembayaran_enum")
+}
+
+enum UserRole {
+  owner
+  admin
+  kasir
+  operator
+
+  @@map("peran_pengguna_enum")
+}
+
+enum StockMovementType {
+  restock
+  adjustment
+  order_checkout
+
+  @@map("jenis_pergerakan_stok_enum")
+}
+
+enum StockDirection {
+  in
+  out
+
+  @@map("arah_pergerakan_stok_enum")
+}
+
+model User {
+  id                 String   @id @default(uuid())
+  username           String   @unique @map("nama_pengguna")
+  passwordHash       String   @map("kata_sandi_hash")
+  role               UserRole @default(admin) @map("peran")
+  isActive           Boolean  @default(true) @map("aktif")
+  mustChangePassword Boolean  @default(true) @map("wajib_ganti_kata_sandi")
+  createdAt          DateTime @default(now()) @map("dibuat_pada")
+  updatedAt          DateTime @updatedAt @map("diperbarui_pada")
+  deletedAt          DateTime? @map("dihapus_pada")
+
+  stockMovements StockMovement[]
+
+  @@index([deletedAt])
+  @@map("pengguna")
+}
+
+model ProductCategory {
+  id        String    @id @default(uuid())
+  name      String    @unique @map("nama")
+  icon      String    @map("ikon")
+  isActive  Boolean   @default(true) @map("aktif")
+  createdAt DateTime  @default(now()) @map("dibuat_pada")
+  updatedAt DateTime  @updatedAt @map("diperbarui_pada")
+  deletedAt DateTime? @map("dihapus_pada")
+
+  products Product[]
+
+  @@index([deletedAt])
+  @@map("kategori_produk")
+}
+
+model Product {
+  id               String      @id @default(uuid())
+  name             String      @map("nama")
+  categoryId       String      @map("kategori_produk_id")
+  pricingUnit      PricingUnit @map("satuan_harga")
+  hasCustomSize    Boolean     @default(false) @map("punya_ukuran_kustom")
+  customWidth      Decimal?    @db.Decimal(14, 4) @map("panjang_kustom")
+  customHeight     Decimal?    @db.Decimal(14, 4) @map("lebar_kustom")
+  finishingCost    Int         @default(0) @map("biaya_finishing")
+  estimatedMinutes Int         @default(0) @map("estimasi_menit")
+  isActive         Boolean     @default(true) @map("aktif")
+  createdAt        DateTime    @default(now()) @map("dibuat_pada")
+  updatedAt        DateTime    @updatedAt @map("diperbarui_pada")
+  deletedAt        DateTime?   @map("dihapus_pada")
+
+  category ProductCategory @relation(fields: [categoryId], references: [id])
+  variants ProductMaterialVariant[]
+  orderItems OrderItem[]
+
+  @@index([categoryId])
+  @@index([deletedAt])
+  @@index([name])
+  @@map("produk")
+}
+
+model ProductMaterialVariant {
+  id           String    @id @default(uuid())
+  productId    String    @map("produk_id")
+  materialId   String    @map("bahan_id")
+  name         String    @map("nama")
+  costPrice    Int       @map("harga_modal")
+  sellingPrice Int       @map("harga_jual")
+  isActive     Boolean   @default(true) @map("aktif")
+  createdAt    DateTime  @default(now()) @map("dibuat_pada")
+  updatedAt    DateTime  @updatedAt @map("diperbarui_pada")
+  deletedAt    DateTime? @map("dihapus_pada")
+
+  product   Product  @relation(fields: [productId], references: [id])
+  material  Material @relation("BahanVarianProduk", fields: [materialId], references: [id])
+  recipes   VariantMaterialRecipe[]
+  orderItems OrderItem[]
+
+  @@index([productId])
+  @@index([materialId])
+  @@index([deletedAt])
+  @@map("varian_bahan_produk")
+}
+
+model Material {
+  id            String    @id @default(uuid())
+  name          String    @unique @map("nama")
+  unit          String    @map("satuan")
+  costPrice     Int       @default(0) @map("harga_modal")
+  sellingPrice  Int       @default(0) @map("harga_jual")
+  currentStock  Decimal   @db.Decimal(14, 4) @map("stok_saat_ini")
+  minStock      Decimal   @db.Decimal(14, 4) @map("stok_minimum")
+  lastRestocked DateTime  @map("terakhir_restok")
+  isActive      Boolean   @default(true) @map("aktif")
+  createdAt     DateTime  @default(now()) @map("dibuat_pada")
+  updatedAt     DateTime  @updatedAt @map("diperbarui_pada")
+  deletedAt     DateTime? @map("dihapus_pada")
+
+  recipes       VariantMaterialRecipe[]
+  productVariants ProductMaterialVariant[] @relation("BahanVarianProduk")
+  stockMovements StockMovement[]
+
+  @@index([deletedAt])
+  @@index([name])
+  @@map("bahan")
+}
+
+model VariantMaterialRecipe {
+  id           String   @id @default(uuid())
+  variantId    String   @map("varian_bahan_produk_id")
+  materialId   String   @map("bahan_id")
+  usagePerUnit Decimal  @db.Decimal(14, 6) @map("pemakaian_per_satuan")
+  createdAt    DateTime @default(now()) @map("dibuat_pada")
+  updatedAt    DateTime @updatedAt @map("diperbarui_pada")
+
+  variant  ProductMaterialVariant @relation(fields: [variantId], references: [id])
+  material Material               @relation(fields: [materialId], references: [id])
+
+  @@unique([variantId, materialId])
+  @@index([materialId])
+  @@map("resep_bahan_varian")
+}
+
+model Customer {
+  id            String    @id @default(uuid())
+  name          String    @map("nama")
+  phone         String    @unique @map("no_telepon")
+  email         String?   @map("email")
+  totalSpent    Int       @default(0) @map("total_belanja")
+  totalOrders   Int       @default(0) @map("total_pesanan")
+  loyaltyPoints Int       @default(0) @map("poin_loyalitas")
+  isActive      Boolean   @default(true) @map("aktif")
+  createdAt     DateTime  @default(now()) @map("dibuat_pada")
+  updatedAt     DateTime  @updatedAt @map("diperbarui_pada")
+  deletedAt     DateTime? @map("dihapus_pada")
+
+  orders Order[]
+
+  @@index([deletedAt])
+  @@index([name])
+  @@map("pelanggan")
+}
+
+model Order {
+  id               String        @id @default(uuid())
+  orderNumber      String        @unique @map("nomor_pesanan")
+  customerId       String?       @map("pelanggan_id")
+  customerName     String        @map("nama_pelanggan")
+  customerPhone    String        @map("telepon_pelanggan")
+  paymentMethod    PaymentMethod @map("metode_pembayaran")
+  status          OrderStatus   @default(menunggu_desain)
+  subtotal        Int
+  discount        Int           @default(0) @map("diskon")
+  tax             Int           @default(0) @map("pajak")
+  total           Int
+  notes           String        @default("") @map("catatan")
+  deadline        DateTime?     @map("tenggat_waktu")
+  designFileUrl   String?       @map("url_file_desain")
+  estimatedMinutes Int          @default(0) @map("estimasi_menit")
+  createdAt       DateTime      @default(now()) @map("dibuat_pada")
+  updatedAt       DateTime      @updatedAt @map("diperbarui_pada")
+  deletedAt       DateTime?     @map("dihapus_pada")
+
+  customer Customer? @relation(fields: [customerId], references: [id])
+  items    OrderItem[]
+  stockMovements StockMovement[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("pesanan")
+}
+
+model OrderItem {
+  id               String      @id @default(uuid())
+  orderId          String      @map("pesanan_id")
+  productId        String      @map("produk_id")
+  variantId        String      @map("varian_bahan_produk_id")
+  productName      String      @map("nama_produk")
+  variantName      String      @map("nama_varian")
+  pricingUnit      PricingUnit @map("satuan_harga")
+  unitPrice        Int         @map("harga_satuan")
+  quantity         Int         @default(1) @map("jumlah")
+  width            Decimal?    @db.Decimal(14, 4) @map("panjang")
+  height           Decimal?    @db.Decimal(14, 4) @map("lebar")
+  notes            String      @default("") @map("catatan")
+  finishing       Boolean     @default(false)
+  finishingCost   Int         @default(0) @map("biaya_finishing")
+  subtotal        Int
+  estimatedMinutes Int        @default(0) @map("estimasi_menit")
+  createdAt       DateTime    @default(now()) @map("dibuat_pada")
+
+  order   Order                  @relation(fields: [orderId], references: [id])
+  product Product                @relation(fields: [productId], references: [id])
+  variant ProductMaterialVariant @relation(fields: [variantId], references: [id])
+
+  @@index([orderId])
+  @@index([productId])
+  @@index([variantId])
+  @@map("item_pesanan")
+}
+
+model StockMovement {
+  id           String            @id @default(uuid())
+  materialId   String            @map("bahan_id")
+  orderId      String?           @map("pesanan_id")
+  userId       String?           @map("pengguna_id")
+  type         StockMovementType @map("jenis")
+  direction    StockDirection    @map("arah")
+  quantity     Decimal           @db.Decimal(14, 4) @map("jumlah")
+  balanceAfter Decimal           @db.Decimal(14, 4) @map("saldo_setelah")
+  notes        String            @default("") @map("catatan")
+  createdAt    DateTime          @default(now()) @map("dibuat_pada")
+
+  material Material @relation(fields: [materialId], references: [id])
+  order    Order?   @relation(fields: [orderId], references: [id])
+  user     User?    @relation(fields: [userId], references: [id])
+
+  @@index([materialId])
+  @@index([orderId])
+  @@index([createdAt])
+  @@map("pergerakan_stok")
+}
+
+model Expense {
+  id          String    @id @default(uuid())
+  date        DateTime  @map("tanggal")
+  category    String    @map("kategori")
+  description String    @map("keterangan")
+  amount      Int       @map("jumlah")
+  createdAt   DateTime  @default(now()) @map("dibuat_pada")
+  updatedAt   DateTime  @updatedAt @map("diperbarui_pada")
+  deletedAt   DateTime? @map("dihapus_pada")
+
+  @@index([date])
+  @@index([category])
+  @@index([deletedAt])
+  @@map("pengeluaran")
+}

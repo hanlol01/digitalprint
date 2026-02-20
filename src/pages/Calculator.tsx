@@ -1,29 +1,54 @@
-import { useState } from 'react';
-import { products, categories, formatCurrency } from '@/data/mockData';
-import { Calculator as CalcIcon } from 'lucide-react';
-import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Button } from '@/components/ui/button';
+import { useEffect, useMemo, useState } from "react";
+import { Calculator as CalcIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useCategories } from "@/hooks/useCategories";
+import { useProducts } from "@/hooks/useProducts";
+import { formatCurrency } from "@/lib/format";
 
 export default function CalculatorPage() {
-  const [productId, setProductId] = useState(products[0].id);
-  const [materialId, setMaterialId] = useState(products[0].materialVariants[0]?.id || '');
+  const { data: categories = [] } = useCategories({ activeOnly: true });
+  const { data: products = [] } = useProducts({ activeOnly: true });
+
+  const [productId, setProductId] = useState<string>("");
+  const [materialId, setMaterialId] = useState<string>("");
   const [width, setWidth] = useState(1);
   const [height, setHeight] = useState(1);
   const [qty, setQty] = useState(1);
   const [finishing, setFinishing] = useState(false);
 
-  const product = products.find(p => p.id === productId)!;
-  const material = product.materialVariants.find(m => m.id === materialId);
-  const price = material ? material.pricePerUnit : product.basePrice;
+  useEffect(() => {
+    if (!productId && products.length > 0) {
+      setProductId(products[0].id);
+    }
+  }, [products, productId]);
+
+  const product = useMemo(() => products.find((item) => item.id === productId), [products, productId]);
+
+  useEffect(() => {
+    const selected = products.find((item) => item.id === productId);
+    if (selected && selected.materialVariants.length > 0) {
+      setMaterialId(selected.materialVariants[0].id);
+    }
+  }, [productId, products]);
+
+  const material = product?.materialVariants.find((item) => item.id === materialId);
+  const price = material ? material.sellingPrice : product?.materialVariants[0]?.sellingPrice ?? 0;
 
   let total = 0;
-  if (product.hasCustomSize) {
-    total = width * height * price;
-  } else {
-    total = qty * price;
+  if (product) {
+    if (product.hasCustomSize) {
+      total = width * height * price;
+    } else {
+      total = qty * price;
+    }
+    if (finishing && product.finishingCost > 0) total += product.finishingCost;
   }
-  if (finishing && product.finishingCost > 0) total += product.finishingCost;
+
+  if (!product) {
+    return <div className="text-sm text-muted-foreground">Memuat data produk...</div>;
+  }
 
   return (
     <div className="max-w-xl mx-auto animate-fade-in">
@@ -41,16 +66,25 @@ export default function CalculatorPage() {
         <div className="space-y-4">
           <div>
             <label className="text-sm font-medium text-foreground mb-1.5 block">Produk</label>
-            <Select value={productId} onValueChange={(v) => {
-              setProductId(v);
-              const p = products.find(x => x.id === v)!;
-              setMaterialId(p.materialVariants[0]?.id || '');
-            }}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+            <Select
+              value={productId}
+              onValueChange={(value) => {
+                setProductId(value);
+                const selected = products.find((item) => item.id === value);
+                setMaterialId(selected?.materialVariants[0]?.id ?? "");
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
-                {products.map(p => {
-                  const cat = categories.find(c => c.id === p.categoryId);
-                  return <SelectItem key={p.id} value={p.id}>{cat?.icon} {p.name}</SelectItem>;
+                {products.map((item) => {
+                  const category = categories.find((row) => row.id === item.categoryId);
+                  return (
+                    <SelectItem key={item.id} value={item.id}>
+                      {category?.icon} {item.name}
+                    </SelectItem>
+                  );
                 })}
               </SelectContent>
             </Select>
@@ -60,10 +94,14 @@ export default function CalculatorPage() {
             <div>
               <label className="text-sm font-medium text-foreground mb-1.5 block">Bahan</label>
               <Select value={materialId} onValueChange={setMaterialId}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
-                  {product.materialVariants.map(m => (
-                    <SelectItem key={m.id} value={m.id}>{m.name} - {formatCurrency(m.pricePerUnit)}</SelectItem>
+                  {product.materialVariants.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.name} - {formatCurrency(item.sellingPrice)}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -73,15 +111,11 @@ export default function CalculatorPage() {
           {product.hasCustomSize ? (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-sm font-medium text-foreground mb-1.5 block">
-                  Panjang ({product.pricingUnit === 'per_cm' ? 'cm' : 'meter'})
-                </label>
+                <label className="text-sm font-medium text-foreground mb-1.5 block">Panjang</label>
                 <Input type="number" min={0.1} step={0.1} value={width} onChange={(e) => setWidth(Number(e.target.value))} />
               </div>
               <div>
-                <label className="text-sm font-medium text-foreground mb-1.5 block">
-                  Lebar ({product.pricingUnit === 'per_cm' ? 'cm' : 'meter'})
-                </label>
+                <label className="text-sm font-medium text-foreground mb-1.5 block">Lebar</label>
                 <Input type="number" min={0.1} step={0.1} value={height} onChange={(e) => setHeight(Number(e.target.value))} />
               </div>
             </div>
@@ -104,11 +138,14 @@ export default function CalculatorPage() {
             <p className="text-3xl font-bold text-primary">{formatCurrency(total)}</p>
             {product.hasCustomSize && (
               <p className="text-xs text-muted-foreground mt-2">
-                {width} x {height} {product.pricingUnit === 'per_cm' ? 'cm' : 'm'} = {(width * height).toFixed(2)} {product.pricingUnit === 'per_cm' ? 'cm²' : 'm²'}
+                {width} x {height} = {(width * height).toFixed(2)}
               </p>
             )}
-            <p className="text-xs text-muted-foreground mt-1">⏱ Estimasi produksi: ~{product.estimatedMinutes} menit</p>
+            <p className="text-xs text-muted-foreground mt-1">Estimasi produksi: ~{product.estimatedMinutes} menit</p>
           </div>
+          <Button type="button" variant="outline" className="w-full">
+            Simulasi Selesai
+          </Button>
         </div>
       </div>
     </div>

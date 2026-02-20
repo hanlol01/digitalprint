@@ -1,0 +1,141 @@
+openapi: 3.0.3
+info:
+  title: BizPrint Pro API
+  version: 1.0.0
+  description: API backend untuk sistem digital printing BizPrint Pro.
+servers:
+  - url: http://localhost:4000/api/v1
+tags:
+  - name: Auth
+  - name: Master Data
+  - name: Pesanan
+  - name: Pengeluaran
+  - name: Laporan
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login pengguna
+      responses:
+        "200":
+          description: Login berhasil
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Ambil profil pengguna aktif
+      responses:
+        "200":
+          description: Data pengguna
+  /auth/ganti-password:
+    patch:
+      tags: [Auth]
+      summary: Ganti password pengguna aktif
+      responses:
+        "200":
+          description: Password diperbarui
+  /kategori-produk:
+    get:
+      tags: [Master Data]
+      summary: List kategori produk
+    post:
+      tags: [Master Data]
+      summary: Buat kategori produk
+  /produk:
+    get:
+      tags: [Master Data]
+      summary: List produk
+    post:
+      tags: [Master Data]
+      summary: Buat produk
+  /bahan:
+    get:
+      tags: [Master Data]
+      summary: List bahan
+    post:
+      tags: [Master Data]
+      summary: Buat bahan
+  /bahan/{id}/restok:
+    post:
+      tags: [Master Data]
+      summary: Restok bahan
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+  /bahan/{id}/penyesuaian-stok:
+    post:
+      tags: [Master Data]
+      summary: Penyesuaian stok bahan
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+  /pelanggan:
+    get:
+      tags: [Master Data]
+      summary: List pelanggan
+    post:
+      tags: [Master Data]
+      summary: Buat pelanggan
+  /pesanan:
+    get:
+      tags: [Pesanan]
+      summary: List pesanan
+    post:
+      tags: [Pesanan]
+      summary: Checkout pesanan POS
+  /pesanan/{id}:
+    get:
+      tags: [Pesanan]
+      summary: Detail pesanan
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+  /pesanan/{id}/status:
+    patch:
+      tags: [Pesanan]
+      summary: Update status pesanan
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+  /pesanan/ringkasan-status:
+    get:
+      tags: [Pesanan]
+      summary: Ringkasan jumlah pesanan per status
+  /pengeluaran:
+    get:
+      tags: [Pengeluaran]
+      summary: List pengeluaran
+    post:
+      tags: [Pengeluaran]
+      summary: Buat pengeluaran
+  /laporan/ringkasan:
+    get:
+      tags: [Laporan]
+      summary: Ringkasan keuangan
+  /laporan/penjualan-harian:
+    get:
+      tags: [Laporan]
+      summary: Penjualan harian
+  /laporan/produk-terlaris:
+    get:
+      tags: [Laporan]
+      summary: Produk terlaris
+  /laporan/metode-pembayaran:
+    get:
+      tags: [Laporan]
+      summary: Rekap metode pembayaran
+  /laporan/pengeluaran-per-kategori:
+    get:
+      tags: [Laporan]
+      summary: Rekap pengeluaran per kategori

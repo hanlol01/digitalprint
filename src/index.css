@@ -151,6 +151,43 @@
     @apply flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border/30;
   }
 
+  .pos-category-scroll {
+    @apply overflow-x-auto overflow-y-hidden;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  .pos-category-scroll::-webkit-scrollbar {
+    height: 6px;
+  }
+
+  .pos-category-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .pos-category-scroll::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+    border-radius: 9999px;
+  }
+
+  .pos-cart-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  .pos-cart-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .pos-cart-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .pos-cart-scroll::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+    border-radius: 9999px;
+  }
+
   .badge-status {
     @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
   }
