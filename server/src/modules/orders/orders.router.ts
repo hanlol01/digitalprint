@@ -1,5 +1,13 @@
 import { Router } from "express";
-import { OrderStatus, PaymentMethod, Prisma, PricingUnit, StockDirection, StockMovementType } from "@prisma/client";
+import {
+  OrderStatus,
+  PaymentMethod,
+  Prisma,
+  PricingUnit,
+  StockDirection,
+  StockMovementType,
+  TransactionItemType,
+} from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { authenticate, authorizeRoles } from "../../middlewares/auth";
@@ -20,8 +28,11 @@ const STATUS_FLOW: OrderStatus[] = [
 ];
 
 const orderItemSchema = z.object({
+  itemType: z.nativeEnum(TransactionItemType).optional(),
   productId: z.string().uuid(),
-  variantId: z.string().uuid(),
+  variantId: z.string().uuid().optional(),
+  serviceId: z.string().uuid().optional(),
+  displayId: z.string().uuid().optional(),
   quantity: z.number().int().positive().default(1),
   width: z.number().positive().optional(),
   height: z.number().positive().optional(),
@@ -59,12 +70,30 @@ const orderInclude = {
 
 const serializeOrder = (order: Prisma.OrderGetPayload<{ include: typeof orderInclude }>) => ({
   ...order,
+  itemTypes: [...new Set(order.items.map((item) => item.itemType))],
   items: order.items.map((item) => ({
     ...item,
     width: item.width ? toNumber(item.width) : null,
     height: item.height ? toNumber(item.height) : null,
   })),
 });
+
+const resolveItemType = (item: z.infer<typeof orderItemSchema>): TransactionItemType => item.itemType ?? TransactionItemType.produk;
+
+const isAreaUnitName = (value: string | null | undefined): boolean => {
+  if (!value) return false;
+  const unit = value.trim().toLowerCase();
+  return unit === "m2" || unit === "cm";
+};
+
+const pricingUnitFromUnitName = (value: string | null | undefined): PricingUnit => {
+  if (!value) return PricingUnit.per_pcs;
+  const unit = value.trim().toLowerCase();
+  if (unit === "m2") return PricingUnit.per_meter;
+  if (unit === "cm") return PricingUnit.per_cm;
+  if (unit === "lembar" || unit === "a3") return PricingUnit.per_lembar;
+  return PricingUnit.per_pcs;
+};
 
 ordersRouter.get(
   "/",
@@ -75,10 +104,15 @@ ordersRouter.get(
     const statusQuery = String(req.query.status ?? "").trim();
     const status = STATUS_FLOW.includes(statusQuery as OrderStatus) ? (statusQuery as OrderStatus) : "";
     const search = String(req.query.search ?? "").trim();
+    const itemTypeQuery = String(req.query.itemType ?? "").trim();
+    const itemType = Object.values(TransactionItemType).includes(itemTypeQuery as TransactionItemType)
+      ? (itemTypeQuery as TransactionItemType)
+      : undefined;
 
     const where: Prisma.OrderWhereInput = {
       deletedAt: null,
       ...(status ? { status } : {}),
+      ...(itemType ? { items: { some: { itemType } } } : {}),
       ...(search
         ? {
             OR: [
@@ -111,10 +145,18 @@ ordersRouter.get(
 
 ordersRouter.get(
   "/ringkasan-status",
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
+    const itemTypeQuery = String(req.query.itemType ?? "").trim();
+    const itemType = Object.values(TransactionItemType).includes(itemTypeQuery as TransactionItemType)
+      ? (itemTypeQuery as TransactionItemType)
+      : undefined;
+
     const groups = await prisma.order.groupBy({
       by: ["status"],
-      where: { deletedAt: null },
+      where: {
+        deletedAt: null,
+        ...(itemType ? { items: { some: { itemType } } } : {}),
+      },
       _count: true,
     });
 
@@ -159,28 +201,105 @@ ordersRouter.post(
       throw new ApiError(400, "Format nomor telepon pelanggan tidak valid");
     }
 
-    const variantIds = body.items.map((item) => item.variantId);
-    const variants = await prisma.productMaterialVariant.findMany({
-      where: {
-        id: { in: variantIds },
-        deletedAt: null,
-        isActive: true,
-      },
-      include: {
-        product: true,
-        recipes: true,
-      },
-    });
+    const normalizedItems = body.items.map((item) => ({ ...item, itemType: resolveItemType(item) }));
+    const productItems = normalizedItems.filter((item) => item.itemType === TransactionItemType.produk);
+    const serviceItems = normalizedItems.filter((item) => item.itemType === TransactionItemType.jasa);
+    const displayItems = normalizedItems.filter((item) => item.itemType === TransactionItemType.display);
+
+    for (const item of productItems) {
+      if (!item.variantId) {
+        throw new ApiError(400, "Item produk wajib menyertakan variantId");
+      }
+      if (item.serviceId || item.displayId) {
+        throw new ApiError(400, "Item produk tidak boleh menyertakan serviceId/displayId");
+      }
+    }
+    for (const item of serviceItems) {
+      if (!item.serviceId) {
+        throw new ApiError(400, "Item jasa wajib menyertakan serviceId");
+      }
+      if (item.variantId || item.displayId) {
+        throw new ApiError(400, "Item jasa tidak boleh menyertakan variantId/displayId");
+      }
+    }
+    for (const item of displayItems) {
+      if (!item.displayId) {
+        throw new ApiError(400, "Item display wajib menyertakan displayId");
+      }
+      if (item.variantId || item.serviceId) {
+        throw new ApiError(400, "Item display tidak boleh menyertakan variantId/serviceId");
+      }
+    }
+
+    const variantIds = [...new Set(productItems.map((item) => item.variantId!))];
+    const serviceIds = [...new Set(serviceItems.map((item) => item.serviceId!))];
+    const displayIds = [...new Set(displayItems.map((item) => item.displayId!))];
+
+    const [variants, services, displays] = await Promise.all([
+      prisma.productMaterialVariant.findMany({
+        where: {
+          id: { in: variantIds },
+          deletedAt: null,
+          isActive: true,
+        },
+        include: {
+          product: true,
+          recipes: true,
+        },
+      }),
+      prisma.serviceCatalog.findMany({
+        where: {
+          id: { in: serviceIds },
+          deletedAt: null,
+          isActive: true,
+        },
+        include: {
+          product: true,
+          unit: true,
+          serviceMaterial: true,
+          finishing: true,
+        },
+      }),
+      prisma.displayCatalog.findMany({
+        where: {
+          id: { in: displayIds },
+          deletedAt: null,
+          isActive: true,
+        },
+        include: {
+          product: true,
+          unit: true,
+          frame: true,
+          material: true,
+          finishing: true,
+        },
+      }),
+    ]);
 
     if (variants.length !== variantIds.length) {
       throw new ApiError(400, "Sebagian varian bahan tidak ditemukan");
     }
+    if (services.length !== serviceIds.length) {
+      throw new ApiError(400, "Sebagian katalog jasa tidak ditemukan");
+    }
+    if (displays.length !== displayIds.length) {
+      throw new ApiError(400, "Sebagian katalog display tidak ditemukan");
+    }
 
     const variantMap = new Map(variants.map((variant) => [variant.id, variant]));
+    const serviceMap = new Map(services.map((service) => [service.id, service]));
+    const displayMap = new Map(displays.map((display) => [display.id, display]));
+
     const stockUsageMap = new Map<string, number>();
     const itemPayload: Array<{
+      itemType: TransactionItemType;
       productId: string;
-      variantId: string;
+      variantId: string | null;
+      serviceId: string | null;
+      displayId: string | null;
+      referenceCode: string | null;
+      itemLabel: string | null;
+      unitLabel: string | null;
       productName: string;
       variantName: string;
       pricingUnit: PricingUnit;
@@ -198,61 +317,174 @@ ordersRouter.post(
     let subtotal = 0;
     let estimatedMinutes = 0;
 
-    for (const item of body.items) {
-      const variant = variantMap.get(item.variantId);
-      if (!variant) {
-        throw new ApiError(400, "Varian bahan tidak valid");
-      }
-      if (variant.productId !== item.productId) {
-        throw new ApiError(400, "Produk dan varian tidak cocok");
-      }
-      if (variant.product.deletedAt || !variant.product.isActive) {
-        throw new ApiError(400, `Produk "${variant.product.name}" sudah tidak aktif`);
+    for (const item of normalizedItems) {
+      if (item.itemType === TransactionItemType.produk) {
+        const variant = variantMap.get(item.variantId!);
+        if (!variant) {
+          throw new ApiError(400, "Varian bahan tidak valid");
+        }
+        if (variant.productId !== item.productId) {
+          throw new ApiError(400, "Produk dan varian tidak cocok");
+        }
+        if (variant.product.deletedAt || !variant.product.isActive) {
+          throw new ApiError(400, `Produk "${variant.product.name}" sudah tidak aktif`);
+        }
+
+        const unitPrice = variant.sellingPrice;
+        const quantity = item.quantity ?? 1;
+        const requiresSize =
+          variant.product.pricingUnit === PricingUnit.per_meter ||
+          variant.product.pricingUnit === PricingUnit.per_cm;
+
+        if (requiresSize && (!item.width || !item.height)) {
+          throw new ApiError(400, `Produk "${variant.product.name}" membutuhkan panjang dan lebar`);
+        }
+
+        const area = requiresSize ? Number(item.width) * Number(item.height) : 0;
+        const factor = requiresSize ? area * quantity : quantity;
+        let itemSubtotal = requiresSize ? area * unitPrice : quantity * unitPrice;
+        if (item.finishing && variant.product.finishingCost > 0) {
+          itemSubtotal += variant.product.finishingCost;
+        }
+
+        for (const recipe of variant.recipes) {
+          const usage = toNumber(recipe.usagePerUnit) * factor;
+          const current = stockUsageMap.get(recipe.materialId) ?? 0;
+          stockUsageMap.set(recipe.materialId, current + usage);
+        }
+
+        const estimatedItemMinutes = variant.product.estimatedMinutes * Math.max(quantity, 1);
+        const roundedSubtotal = Math.round(itemSubtotal);
+
+        itemPayload.push({
+          itemType: TransactionItemType.produk,
+          productId: variant.productId,
+          variantId: variant.id,
+          serviceId: null,
+          displayId: null,
+          referenceCode: variant.code ?? null,
+          itemLabel: variant.name,
+          unitLabel: variant.unitId ? null : null,
+          productName: variant.product.name,
+          variantName: variant.name,
+          pricingUnit: variant.product.pricingUnit,
+          unitPrice,
+          quantity,
+          width: item.width ?? null,
+          height: item.height ?? null,
+          notes: item.notes ?? "",
+          finishing: item.finishing,
+          finishingCost: item.finishing ? variant.product.finishingCost : 0,
+          subtotal: roundedSubtotal,
+          estimatedMinutes: estimatedItemMinutes,
+        });
+
+        subtotal += roundedSubtotal;
+        estimatedMinutes += estimatedItemMinutes;
+        continue;
       }
 
-      const unitPrice = variant.sellingPrice;
+      if (item.itemType === TransactionItemType.jasa) {
+        const service = serviceMap.get(item.serviceId!);
+        if (!service) {
+          throw new ApiError(400, "Katalog jasa tidak valid");
+        }
+        if (service.productId !== item.productId) {
+          throw new ApiError(400, "Produk dan jasa tidak cocok");
+        }
+        if (service.product.deletedAt || !service.product.isActive) {
+          throw new ApiError(400, `Produk "${service.product.name}" sudah tidak aktif`);
+        }
+
+        const quantity = item.quantity ?? 1;
+        const unitName = service.unit.name;
+        const requiresSize = isAreaUnitName(unitName);
+        if (requiresSize && (!item.width || !item.height)) {
+          throw new ApiError(400, `Jasa "${service.code}" membutuhkan panjang dan lebar`);
+        }
+
+        const factor = requiresSize ? Number(item.width) * Number(item.height) * quantity : quantity;
+        const roundedSubtotal = Math.round(factor * service.sellingPrice);
+        const estimatedItemMinutes = service.product.estimatedMinutes * Math.max(quantity, 1);
+
+        itemPayload.push({
+          itemType: TransactionItemType.jasa,
+          productId: service.productId,
+          variantId: null,
+          serviceId: service.id,
+          displayId: null,
+          referenceCode: service.code,
+          itemLabel: `${service.serviceMaterial.name} - ${service.finishing.name}`,
+          unitLabel: unitName,
+          productName: service.product.name,
+          variantName: `${service.serviceMaterial.name} - ${service.finishing.name}`,
+          pricingUnit: pricingUnitFromUnitName(unitName),
+          unitPrice: service.sellingPrice,
+          quantity,
+          width: item.width ?? null,
+          height: item.height ?? null,
+          notes: item.notes ?? "",
+          finishing: false,
+          finishingCost: 0,
+          subtotal: roundedSubtotal,
+          estimatedMinutes: estimatedItemMinutes,
+        });
+
+        subtotal += roundedSubtotal;
+        estimatedMinutes += estimatedItemMinutes;
+        continue;
+      }
+
+      const display = displayMap.get(item.displayId!);
+      if (!display) {
+        throw new ApiError(400, "Katalog display tidak valid");
+      }
+      if (display.productId !== item.productId) {
+        throw new ApiError(400, "Produk dan display tidak cocok");
+      }
+      if (display.product.deletedAt || !display.product.isActive) {
+        throw new ApiError(400, `Produk "${display.product.name}" sudah tidak aktif`);
+      }
+
       const quantity = item.quantity ?? 1;
-      const requiresSize =
-        variant.product.pricingUnit === PricingUnit.per_meter ||
-        variant.product.pricingUnit === PricingUnit.per_cm;
+      if (quantity < display.minimumOrder) {
+        throw new ApiError(400, `Display "${display.name}" minimal order ${display.minimumOrder}`);
+      }
 
+      const unitName = display.unit.name;
+      const requiresSize = isAreaUnitName(unitName);
       if (requiresSize && (!item.width || !item.height)) {
-        throw new ApiError(400, `Produk "${variant.product.name}" membutuhkan panjang dan lebar`);
+        throw new ApiError(400, `Display "${display.name}" membutuhkan panjang dan lebar`);
       }
 
-      const area = requiresSize ? Number(item.width) * Number(item.height) : 0;
-      const factor = requiresSize ? area * quantity : quantity;
-      let itemSubtotal = requiresSize ? area * unitPrice : quantity * unitPrice;
-      if (item.finishing && variant.product.finishingCost > 0) {
-        itemSubtotal += variant.product.finishingCost;
-      }
-
-      for (const recipe of variant.recipes) {
-        const usage = toNumber(recipe.usagePerUnit) * factor;
-        const current = stockUsageMap.get(recipe.materialId) ?? 0;
-        stockUsageMap.set(recipe.materialId, current + usage);
-      }
-
-      const estimatedItemMinutes = variant.product.estimatedMinutes * Math.max(quantity, 1);
+      const factor = requiresSize ? Number(item.width) * Number(item.height) * quantity : quantity;
+      const roundedSubtotal = Math.round(factor * display.sellingPrice);
+      const estimatedItemMinutes = display.product.estimatedMinutes * Math.max(quantity, 1);
 
       itemPayload.push({
-        productId: variant.productId,
-        variantId: variant.id,
-        productName: variant.product.name,
-        variantName: variant.name,
-        pricingUnit: variant.product.pricingUnit,
-        unitPrice,
+        itemType: TransactionItemType.display,
+        productId: display.productId,
+        variantId: null,
+        serviceId: null,
+        displayId: display.id,
+        referenceCode: display.code,
+        itemLabel: display.name,
+        unitLabel: unitName,
+        productName: display.product.name,
+        variantName: `${display.name} - ${display.finishing.name}`,
+        pricingUnit: pricingUnitFromUnitName(unitName),
+        unitPrice: display.sellingPrice,
         quantity,
         width: item.width ?? null,
         height: item.height ?? null,
         notes: item.notes ?? "",
-        finishing: item.finishing,
-        finishingCost: item.finishing ? variant.product.finishingCost : 0,
-        subtotal: Math.round(itemSubtotal),
+        finishing: false,
+        finishingCost: 0,
+        subtotal: roundedSubtotal,
         estimatedMinutes: estimatedItemMinutes,
       });
 
-      subtotal += Math.round(itemSubtotal);
+      subtotal += roundedSubtotal;
       estimatedMinutes += estimatedItemMinutes;
     }
 
@@ -283,8 +515,6 @@ ordersRouter.post(
             throw new ApiError(400, "Pelanggan tidak ditemukan");
           }
         } else {
-          // Hard-enforce uniqueness by phone: repeat checkout on same phone always points
-          // to one customer row, then total_orders/total_spent can be accumulated correctly.
           const customerByPhone = await tx.customer.upsert({
             where: { phone: normalizedCustomerPhone },
             update: {
@@ -323,8 +553,14 @@ ordersRouter.post(
         await tx.orderItem.createMany({
           data: itemPayload.map((item) => ({
             orderId: order.id,
+            itemType: item.itemType,
             productId: item.productId,
             variantId: item.variantId,
+            serviceId: item.serviceId,
+            displayId: item.displayId,
+            referenceCode: item.referenceCode,
+            itemLabel: item.itemLabel,
+            unitLabel: item.unitLabel,
             productName: item.productName,
             variantName: item.variantName,
             pricingUnit: item.pricingUnit,

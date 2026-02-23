@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+﻿import { useMemo, useState } from "react";
 import { Check, ChevronsUpDown, Edit, Plus, Search, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -12,27 +12,50 @@ import { cn } from "@/lib/utils";
 import { useCategories } from "@/hooks/useCategories";
 import { useCreateProduct, useDeleteProduct, useProducts, useUpdateProduct } from "@/hooks/useProducts";
 import { useMaterials } from "@/hooks/useMaterials";
+import { useFinishings, useUnits } from "@/hooks/useMasters";
 import { formatCurrency } from "@/lib/format";
 import { type MaterialVariant, type PricingUnit, type Product } from "@/types";
 import { toast } from "sonner";
 
 const pricingLabel: Record<string, string> = {
   per_lembar: "Per Lembar",
-  per_meter: "Per m²",
-  per_cm: "Per cm²",
+  per_meter: "Per m2",
+  per_cm: "Per cm2",
   per_pcs: "Per Pcs",
 };
 
 const pricingOptions: { value: PricingUnit; label: string }[] = [
   { value: "per_lembar", label: "Per Lembar" },
-  { value: "per_meter", label: "Per m²" },
-  { value: "per_cm", label: "Per cm²" },
+  { value: "per_meter", label: "Per m2" },
+  { value: "per_cm", label: "Per cm2" },
   { value: "per_pcs", label: "Per Pcs" },
 ];
 
+const sanitizeCategoryIcon = (icon?: string | null): string | null => {
+  const value = icon?.trim();
+  if (!value) return null;
+  return value.toLowerCase() === "box" ? null : value;
+};
+
+const compareByCodeAsc = <T extends { code?: string | null; name?: string }>(a: T, b: T): number => {
+  const codeA = (a.code ?? "").trim();
+  const codeB = (b.code ?? "").trim();
+
+  if (codeA && codeB) {
+    return codeA.localeCompare(codeB, "en", { numeric: true, sensitivity: "base" });
+  }
+  if (codeA) return -1;
+  if (codeB) return 1;
+
+  return (a.name ?? "").localeCompare(b.name ?? "", "id", { sensitivity: "base" });
+};
+
 const emptyProduct: Omit<Product, "id"> = {
+  code: "",
+  legacyNumber: null,
   name: "",
   categoryId: "",
+  unitId: null,
   pricingUnit: "per_lembar",
   materialVariants: [],
   hasCustomSize: false,
@@ -57,6 +80,8 @@ export default function Products() {
 
   const { data: categories = [] } = useCategories({ activeOnly: true });
   const { data: materials = [] } = useMaterials();
+  const { data: units = [] } = useUnits({ activeOnly: true });
+  const { data: finishings = [] } = useFinishings({ activeOnly: true });
   const { data: products = [], isLoading } = useProducts({
     search,
     categoryId: selectedCat === "all" ? undefined : selectedCat,
@@ -67,11 +92,17 @@ export default function Products() {
   const deleteProduct = useDeleteProduct();
 
   const filtered = useMemo(() => {
-    return products.filter((product) => {
+    const result = products.filter((product) => {
       if (selectedCat !== "all" && product.categoryId !== selectedCat) return false;
-      if (search && !product.name.toLowerCase().includes(search.toLowerCase())) return false;
+      if (search) {
+        const keyword = search.toLowerCase();
+        const byName = product.name.toLowerCase().includes(keyword);
+        const byCode = (product.code ?? "").toLowerCase().includes(keyword);
+        if (!byName && !byCode) return false;
+      }
       return true;
     });
+    return [...result].sort(compareByCodeAsc);
   }, [products, selectedCat, search]);
 
   const selectedMaterialForVariant = materials.find((material) => material.id === newVariantMaterialId);
@@ -82,8 +113,9 @@ export default function Products() {
 
   const openCreate = () => {
     const defaultCategoryId = categories[0]?.id ?? "";
+    const defaultUnitId = units[0]?.id ?? null;
     setEditingProduct(null);
-    setForm({ ...emptyProduct, categoryId: defaultCategoryId });
+    setForm({ ...emptyProduct, categoryId: defaultCategoryId, unitId: defaultUnitId });
     resetVariantInput();
     setDialogOpen(true);
   };
@@ -91,8 +123,11 @@ export default function Products() {
   const openEdit = (product: Product) => {
     setEditingProduct(product);
     setForm({
+      code: product.code ?? "",
+      legacyNumber: product.legacyNumber ?? null,
       name: product.name,
       categoryId: product.categoryId,
+      unitId: product.unitId ?? null,
       pricingUnit: product.pricingUnit,
       materialVariants: [...product.materialVariants],
       hasCustomSize: product.hasCustomSize,
@@ -120,11 +155,16 @@ export default function Products() {
 
     const variant: MaterialVariant = {
       id: crypto.randomUUID(),
+      code: "",
       materialId: selectedMaterialForVariant.id,
+      unitId: form.unitId ?? undefined,
+      finishingId: undefined,
       name: selectedMaterialForVariant.name,
       costPrice: selectedMaterialForVariant.costPrice ?? 0,
       sellingPrice: selectedMaterialForVariant.sellingPrice ?? 0,
       pricePerUnit: selectedMaterialForVariant.sellingPrice ?? 0,
+      minimumOrder: 1,
+      estimateText: null,
       material: selectedMaterialForVariant,
       recipes: [],
     };
@@ -137,7 +177,18 @@ export default function Products() {
     setForm((prev) => ({ ...prev, materialVariants: prev.materialVariants.filter((variant) => variant.id !== id) }));
   };
 
+  const updateVariant = (id: string, updater: (variant: MaterialVariant) => MaterialVariant) => {
+    setForm((prev) => ({
+      ...prev,
+      materialVariants: prev.materialVariants.map((variant) => (variant.id === id ? updater(variant) : variant)),
+    }));
+  };
+
   const handleSave = async () => {
+    if (!form.code?.trim()) {
+      toast.error("Kode produk wajib diisi");
+      return;
+    }
     if (!form.name.trim()) {
       toast.error("Nama produk wajib diisi");
       return;
@@ -154,10 +205,17 @@ export default function Products() {
       toast.error("Panjang dan lebar custom wajib diisi");
       return;
     }
+    if (form.materialVariants.some((variant) => !variant.code?.trim())) {
+      toast.error("Kode varian wajib diisi untuk semua varian");
+      return;
+    }
 
     const payload = {
+      code: form.code.trim(),
+      legacyNumber: form.legacyNumber ?? undefined,
       name: form.name,
       categoryId: form.categoryId,
+      unitId: form.unitId ?? undefined,
       pricingUnit: form.pricingUnit,
       hasCustomSize: form.hasCustomSize,
       customWidth: form.hasCustomSize ? Number(form.customWidth) : undefined,
@@ -166,8 +224,13 @@ export default function Products() {
       estimatedMinutes: form.estimatedMinutes,
       isActive: form.isActive ?? true,
       variants: form.materialVariants.map((variant) => ({
+        code: variant.code?.trim(),
         materialId: variant.materialId,
+        unitId: variant.unitId ?? undefined,
+        finishingId: variant.finishingId ?? undefined,
         name: variant.name,
+        minimumOrder: variant.minimumOrder ?? 1,
+        estimateText: variant.estimateText ?? null,
         recipes: (variant.recipes ?? []).map((recipe) => ({
           materialId: recipe.materialId,
           usagePerUnit: recipe.usagePerUnit,
@@ -222,19 +285,23 @@ export default function Products() {
         >
           Semua
         </button>
-        {categories.map((category) => (
-          <button
-            key={category.id}
-            onClick={() => setSelectedCat(category.id)}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap ${
-              selectedCat === category.id
-                ? "bg-primary text-primary-foreground"
-                : "bg-card border border-border text-muted-foreground hover:bg-muted"
-            }`}
-          >
-            {category.icon} {category.name}
-          </button>
-        ))}
+        {categories.map((category) => {
+          const categoryIcon = sanitizeCategoryIcon(category.icon);
+          return (
+            <button
+              key={category.id}
+              onClick={() => setSelectedCat(category.id)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap ${
+                selectedCat === category.id
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-card border border-border text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              {categoryIcon ? `${categoryIcon} ` : ""}
+              {category.name}
+            </button>
+          );
+        })}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -242,15 +309,16 @@ export default function Products() {
         {!isLoading &&
           filtered.map((product) => {
             const category = categories.find((item) => item.id === product.categoryId);
+            const categoryIcon = sanitizeCategoryIcon(category?.icon);
             return (
               <div key={product.id} className="stat-card group">
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-3">
-                    <div className="text-2xl">{category?.icon}</div>
+                    {categoryIcon ? <div className="text-2xl">{categoryIcon}</div> : null}
                     <div>
                       <h4 className="font-semibold text-foreground">{product.name}</h4>
                       <p className="text-xs text-muted-foreground">
-                        {category?.name} • {pricingLabel[product.pricingUnit]}
+                        {product.code || "-"} | {category?.name} | {pricingLabel[product.pricingUnit]}
                       </p>
                     </div>
                   </div>
@@ -292,6 +360,7 @@ export default function Products() {
                 {product.finishingCost > 0 && (
                   <p className="text-xs text-muted-foreground mt-2">Finishing: +{formatCurrency(product.finishingCost)}</p>
                 )}
+                <p className="text-xs text-muted-foreground mt-1">Satuan: {product.unit?.name || "-"}</p>
                 <p className="text-xs text-muted-foreground mt-1">Estimasi: {product.estimatedMinutes} menit</p>
               </div>
             );
@@ -304,11 +373,31 @@ export default function Products() {
             <DialogTitle>{editingProduct ? "Edit Produk" : "Tambah Produk Baru"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label>Nama Produk</Label>
-              <Input value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="space-y-2">
+                <Label>Kode Produk</Label>
+                <Input value={form.code ?? ""} onChange={(e) => setForm((prev) => ({ ...prev, code: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>ID Produk (Legacy)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={form.legacyNumber ?? ""}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      legacyNumber: e.target.value ? Number(e.target.value) : null,
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Nama Produk</Label>
+                <Input value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} />
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="space-y-2">
                 <Label>Kategori</Label>
                 <Select value={form.categoryId} onValueChange={(value) => setForm((prev) => ({ ...prev, categoryId: value }))}>
@@ -316,9 +405,37 @@ export default function Products() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {categories.map((category) => (
-                      <SelectItem key={category.id} value={category.id}>
-                        {category.icon} {category.name}
+                    {categories.map((category) => {
+                      const categoryIcon = sanitizeCategoryIcon(category.icon);
+                      return (
+                        <SelectItem key={category.id} value={category.id}>
+                          {categoryIcon ? `${categoryIcon} ` : ""}
+                          {category.name}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Satuan</Label>
+                <Select
+                  value={form.unitId ?? "none"}
+                  onValueChange={(value) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      unitId: value === "none" ? null : value,
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">-</SelectItem>
+                    {units.map((unit) => (
+                      <SelectItem key={unit.id} value={unit.id}>
+                        {unit.code} - {unit.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -409,13 +526,99 @@ export default function Products() {
               <p className="text-xs text-muted-foreground">Harga modal dan harga jual mengikuti master bahan pada halaman Stok Bahan.</p>
               <div className="space-y-1.5">
                 {form.materialVariants.map((variant) => (
-                  <div key={variant.id} className="grid grid-cols-[1fr_140px_140px_32px] items-center gap-2 text-sm bg-muted/30 rounded px-2 py-2">
-                    <span className="text-foreground">{variant.name}</span>
-                    <span className="text-muted-foreground">Modal: {formatCurrency(variant.costPrice)}</span>
-                    <span className="font-medium text-foreground">Jual: {formatCurrency(variant.sellingPrice)}</span>
-                    <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => removeVariant(variant.id)}>
-                      <X className="w-3 h-3" />
-                    </Button>
+                  <div key={variant.id} className="space-y-3 text-sm bg-muted/30 rounded px-3 py-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-foreground font-medium">{variant.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Modal: {formatCurrency(variant.costPrice)} | Jual: {formatCurrency(variant.sellingPrice)}
+                        </p>
+                      </div>
+                      <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => removeVariant(variant.id)}>
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Kode Varian</Label>
+                        <Input
+                          value={variant.code ?? ""}
+                          onChange={(e) => updateVariant(variant.id, (current) => ({ ...current, code: e.target.value }))}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Satuan Varian</Label>
+                        <Select
+                          value={variant.unitId ?? "default"}
+                          onValueChange={(value) =>
+                            updateVariant(variant.id, (current) => ({
+                              ...current,
+                              unitId: value === "default" ? form.unitId ?? null : value,
+                            }))
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="default">Ikuti Produk</SelectItem>
+                            {units.map((unit) => (
+                              <SelectItem key={unit.id} value={unit.id}>
+                                {unit.code}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Finishing</Label>
+                        <Select
+                          value={variant.finishingId ?? "none"}
+                          onValueChange={(value) =>
+                            updateVariant(variant.id, (current) => ({
+                              ...current,
+                              finishingId: value === "none" ? null : value,
+                            }))
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">-</SelectItem>
+                            {finishings.map((finishing) => (
+                              <SelectItem key={finishing.id} value={finishing.id}>
+                                {finishing.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Min Order</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={variant.minimumOrder ?? 1}
+                          onChange={(e) =>
+                            updateVariant(variant.id, (current) => ({
+                              ...current,
+                              minimumOrder: Math.max(Number(e.target.value) || 1, 1),
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-xs">Estimasi Varian</Label>
+                      <Input
+                        value={variant.estimateText ?? ""}
+                        onChange={(e) => updateVariant(variant.id, (current) => ({ ...current, estimateText: e.target.value }))}
+                        placeholder="Contoh: 2 hari"
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -499,3 +702,4 @@ export default function Products() {
     </div>
   );
 }
+

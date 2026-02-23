@@ -7,6 +7,12 @@ import { useCategories } from "@/hooks/useCategories";
 import { useProducts } from "@/hooks/useProducts";
 import { formatCurrency } from "@/lib/format";
 
+const sanitizeCategoryIcon = (icon?: string | null): string | null => {
+  const value = icon?.trim();
+  if (!value) return null;
+  return value.toLowerCase() === "box" ? null : value;
+};
+
 export default function CalculatorPage() {
   const { data: categories = [] } = useCategories({ activeOnly: true });
   const { data: products = [] } = useProducts({ activeOnly: true });
@@ -80,9 +86,11 @@ export default function CalculatorPage() {
               <SelectContent>
                 {products.map((item) => {
                   const category = categories.find((row) => row.id === item.categoryId);
+                  const categoryIcon = sanitizeCategoryIcon(category?.icon);
                   return (
                     <SelectItem key={item.id} value={item.id}>
-                      {category?.icon} {item.name}
+                      {categoryIcon ? `${categoryIcon} ` : ""}
+                      {item.name}
                     </SelectItem>
                   );
                 })}

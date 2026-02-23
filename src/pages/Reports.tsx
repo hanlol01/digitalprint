@@ -13,7 +13,7 @@ import { useCreateExpense, useDeleteExpense, useExpenses, useUpdateExpense } fro
 import { useDailySales, useExpenseByCategory, usePaymentMethodReport, useReportSummary } from "@/hooks/useReports";
 import { formatCurrency, formatNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { Expense } from "@/types";
+import type { Expense, TransactionItemType } from "@/types";
 import { toast } from "sonner";
 
 type Period = "harian" | "mingguan" | "bulanan" | "custom";
@@ -22,6 +22,13 @@ const EXPENSE_CATEGORIES = ["Bahan Baku", "Tinta", "Listrik", "Gaji Karyawan", "
 const COLORS = ["hsl(var(--primary))", "hsl(var(--info))", "hsl(var(--warning))", "hsl(var(--success))", "hsl(var(--accent))"];
 
 const parseCurrencyInput = (value: string): string => value.replace(/\D/g, "");
+const transactionTypeOptions: Array<"all" | TransactionItemType> = ["all", "produk", "jasa", "display"];
+const transactionTypeLabel: Record<"all" | TransactionItemType, string> = {
+  all: "Semua Tipe",
+  produk: "Produk",
+  jasa: "Jasa",
+  display: "Display",
+};
 
 const formatCurrencyInput = (value: string): string => {
   if (!value) return "";
@@ -32,6 +39,7 @@ export default function Reports() {
   const [period, setPeriod] = useState<Period>("bulanan");
   const [startDate, setStartDate] = useState(new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().slice(0, 10));
   const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10));
+  const [itemType, setItemType] = useState<"all" | TransactionItemType>("all");
 
   const [expenseDialogOpen, setExpenseDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -41,7 +49,14 @@ export default function Reports() {
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
   const [categorySearch, setCategorySearch] = useState("");
 
-  const range = useMemo(() => (period === "custom" ? { startDate, endDate } : undefined), [period, startDate, endDate]);
+  const range = useMemo(
+    () => ({
+      startDate: period === "custom" ? startDate : undefined,
+      endDate: period === "custom" ? endDate : undefined,
+      itemType,
+    }),
+    [period, startDate, endDate, itemType],
+  );
 
   const { data: summary } = useReportSummary(range);
   const { data: dailySales = [] } = useDailySales(range);
@@ -170,6 +185,21 @@ export default function Reports() {
               <SelectItem value="mingguan">Mingguan</SelectItem>
               <SelectItem value="bulanan">Bulanan</SelectItem>
               <SelectItem value="custom">Custom Tanggal</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Jenis Transaksi</Label>
+          <Select value={itemType} onValueChange={(value) => setItemType(value as "all" | TransactionItemType)}>
+            <SelectTrigger className="w-40 bg-card">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {transactionTypeOptions.map((type) => (
+                <SelectItem key={type} value={type}>
+                  {transactionTypeLabel[type]}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>

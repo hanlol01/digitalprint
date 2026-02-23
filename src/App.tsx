@@ -10,6 +10,8 @@ import Index from "./pages/Index";
 import POS from "./pages/POS";
 import Orders from "./pages/Orders";
 import Products from "./pages/Products";
+import ServicesPage from "./pages/Services";
+import DisplaysPage from "./pages/Displays";
 import Customers from "./pages/Customers";
 import Materials from "./pages/Materials";
 import CalculatorPage from "./pages/Calculator";
@@ -35,6 +37,8 @@ const App = () => (
                 <Route path="/pos" element={<POS />} />
                 <Route path="/orders" element={<Orders />} />
                 <Route path="/products" element={<Products />} />
+                <Route path="/services" element={<ServicesPage />} />
+                <Route path="/displays" element={<DisplaysPage />} />
                 <Route path="/customers" element={<Customers />} />
                 <Route path="/materials" element={<Materials />} />
                 <Route path="/calculator" element={<CalculatorPage />} />

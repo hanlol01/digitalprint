@@ -6,11 +6,23 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useOrders, useUpdateOrderStatus } from "@/hooks/useOrders";
 import { formatCurrency } from "@/lib/format";
-import { ORDER_STATUS_CONFIG, PAYMENT_METHOD_LABELS, type Order, type OrderStatus, type PaymentMethod } from "@/types";
+import { ORDER_STATUS_CONFIG, PAYMENT_METHOD_LABELS, type Order, type OrderStatus, type PaymentMethod, type TransactionItemType } from "@/types";
 import { toast } from "sonner";
 
 const statusSteps: OrderStatus[] = ["menunggu_desain", "proses_cetak", "finishing", "selesai", "sudah_diambil"];
 const settlementMethods: PaymentMethod[] = ["cash", "transfer", "qris"];
+const transactionTypes: Array<"all" | TransactionItemType> = ["all", "produk", "jasa", "display"];
+const transactionTypeLabel: Record<"all" | TransactionItemType, string> = {
+  all: "Semua Tipe",
+  produk: "Produk",
+  jasa: "Jasa",
+  display: "Display",
+};
+const transactionTypeBadgeClass: Record<TransactionItemType, string> = {
+  produk: "bg-primary/10 text-primary",
+  jasa: "bg-info/10 text-info",
+  display: "bg-warning/10 text-warning",
+};
 
 const getPaymentStatus = (order: Order) => (order.paymentMethod === "piutang" ? "belum_lunas" : "lunas");
 type PaymentFilter = "all" | "lunas" | "belum_lunas";
@@ -18,13 +30,14 @@ type PaymentFilter = "all" | "lunas" | "belum_lunas";
 export default function Orders() {
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [filterPayment, setFilterPayment] = useState<PaymentFilter>("all");
+  const [filterItemType, setFilterItemType] = useState<"all" | TransactionItemType>("all");
   const [search, setSearch] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [settlementOpen, setSettlementOpen] = useState(false);
   const [settlementOrder, setSettlementOrder] = useState<Order | null>(null);
   const [settlementMethod, setSettlementMethod] = useState<PaymentMethod>("cash");
 
-  const { data: orders = [], isLoading } = useOrders({ search, status: filterStatus });
+  const { data: orders = [], isLoading } = useOrders({ search, status: filterStatus, itemType: filterItemType });
   const updateStatus = useUpdateOrderStatus();
 
   const filteredOrders = useMemo(() => {
@@ -107,6 +120,19 @@ export default function Orders() {
             <SelectItem value="belum_lunas">Belum Lunas</SelectItem>
           </SelectContent>
         </Select>
+        <Select value={filterItemType} onValueChange={(value) => setFilterItemType(value as "all" | TransactionItemType)}>
+          <SelectTrigger className="w-full sm:w-44 bg-card">
+            <Filter className="w-4 h-4 mr-2" />
+            <SelectValue placeholder="Filter tipe" />
+          </SelectTrigger>
+          <SelectContent>
+            {transactionTypes.map((type) => (
+              <SelectItem key={type} value={type}>
+                {transactionTypeLabel[type]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
@@ -134,16 +160,22 @@ export default function Orders() {
           filteredOrders.map((order) => {
             const statusConfig = ORDER_STATUS_CONFIG[order.status];
             const isPaid = getPaymentStatus(order) === "lunas";
+            const orderItemTypes = (order.itemTypes?.length ? order.itemTypes : [...new Set(order.items.map((item) => item.itemType))]) as TransactionItemType[];
 
             return (
               <div key={order.id} onClick={() => setSelectedOrder(order)} className="stat-card cursor-pointer flex items-center gap-4 !p-4">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
                     <span className="font-semibold text-sm text-foreground">{order.orderNumber}</span>
                     <span className={`badge-status bg-${statusConfig.color}/10 text-${statusConfig.color}`}>{statusConfig.label}</span>
                     <span className={`badge-status ${isPaid ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}>
                       {isPaid ? "Lunas" : "Belum Lunas"}
                     </span>
+                    {orderItemTypes.map((type) => (
+                      <span key={`${order.id}-${type}`} className={`badge-status ${transactionTypeBadgeClass[type]}`}>
+                        {transactionTypeLabel[type]}
+                      </span>
+                    ))}
                   </div>
                   <p className="text-sm text-muted-foreground">
                     {order.customerName} | {order.customerPhone}
@@ -204,6 +236,26 @@ export default function Orders() {
               <div>
                 <p className="text-sm text-muted-foreground mb-1">Catatan</p>
                 <p className="text-sm text-foreground bg-muted/50 rounded-lg p-3">{selectedOrder.notes || "-"}</p>
+              </div>
+
+              <div>
+                <p className="text-sm font-medium text-foreground mb-2">Breakdown Jenis Item</p>
+                <div className="space-y-1.5">
+                  {(["produk", "jasa", "display"] as TransactionItemType[]).map((type) => {
+                    const items = selectedOrder.items.filter((item) => item.itemType === type);
+                    const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+                    if (items.length === 0) return null;
+                    return (
+                      <div key={type} className="flex items-center justify-between text-sm bg-muted/30 rounded-lg px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`badge-status ${transactionTypeBadgeClass[type]}`}>{transactionTypeLabel[type]}</span>
+                          <span className="text-muted-foreground">{items.length} item</span>
+                        </div>
+                        <span className="font-medium text-foreground">{formatCurrency(subtotal)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
               <div>

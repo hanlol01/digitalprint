@@ -1,17 +1,29 @@
+import { useMemo, useState } from "react";
 import { Clock, ShoppingCart, TrendingUp, Users } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useDailySales, useReportSummary, useTopProducts } from "@/hooks/useReports";
 import { useOrders } from "@/hooks/useOrders";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatCurrency } from "@/lib/format";
-import { ORDER_STATUS_CONFIG } from "@/types";
+import { ORDER_STATUS_CONFIG, type TransactionItemType } from "@/types";
 
 const pieColors = ["hsl(217, 91%, 60%)", "hsl(199, 89%, 48%)", "hsl(142, 71%, 45%)", "hsl(38, 92%, 50%)", "hsl(0, 84%, 60%)"];
+const transactionTypeOptions: Array<"all" | TransactionItemType> = ["all", "produk", "jasa", "display"];
+const transactionTypeLabel: Record<"all" | TransactionItemType, string> = {
+  all: "Semua Tipe",
+  produk: "Produk",
+  jasa: "Jasa",
+  display: "Display",
+};
 
 export default function Dashboard() {
-  const { data: summary } = useReportSummary();
-  const { data: dailySales = [] } = useDailySales();
-  const { data: topProducts = [] } = useTopProducts();
-  const { data: orders = [] } = useOrders();
+  const [itemType, setItemType] = useState<"all" | TransactionItemType>("all");
+  const range = useMemo(() => ({ itemType }), [itemType]);
+
+  const { data: summary } = useReportSummary(range);
+  const { data: dailySales = [] } = useDailySales(range);
+  const { data: topProducts = [] } = useTopProducts(range);
+  const { data: orders = [] } = useOrders({ itemType });
 
   const stats = [
     {
@@ -42,6 +54,21 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 animate-fade-in">
+      <div className="flex justify-end">
+        <Select value={itemType} onValueChange={(value) => setItemType(value as "all" | TransactionItemType)}>
+          <SelectTrigger className="w-40 bg-card">
+            <SelectValue placeholder="Jenis transaksi" />
+          </SelectTrigger>
+          <SelectContent>
+            {transactionTypeOptions.map((type) => (
+              <SelectItem key={type} value={type}>
+                {transactionTypeLabel[type]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {stats.map((stat) => (
           <div key={stat.label} className="stat-card">

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { OrderStatus, Prisma } from "@prisma/client";
+import { OrderStatus, Prisma, TransactionItemType } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { asyncHandler } from "../../utils/async-handler";
 import { sendSuccess } from "../../utils/response";
@@ -10,7 +10,13 @@ const reportsRouter = Router();
 reportsRouter.use(authenticate);
 reportsRouter.use(authorizeRoles("owner", "admin"));
 
-const getOrderRangeWhere = (startDate?: string, endDate?: string): Prisma.OrderWhereInput => {
+const parseItemTypeQuery = (value: string): TransactionItemType | undefined => {
+  return Object.values(TransactionItemType).includes(value as TransactionItemType)
+    ? (value as TransactionItemType)
+    : undefined;
+};
+
+const getOrderRangeWhere = (startDate?: string, endDate?: string, itemType?: TransactionItemType): Prisma.OrderWhereInput => {
   const range = parseDateRange(startDate, endDate);
   return {
     deletedAt: null,
@@ -18,6 +24,7 @@ const getOrderRangeWhere = (startDate?: string, endDate?: string): Prisma.OrderW
       gte: range.start,
       lte: range.end,
     },
+    ...(itemType ? { items: { some: { itemType } } } : {}),
   };
 };
 
@@ -37,14 +44,11 @@ reportsRouter.get(
   asyncHandler(async (req, res) => {
     const startDate = String(req.query.startDate ?? "");
     const endDate = String(req.query.endDate ?? "");
-    const orderWhere = getOrderRangeWhere(startDate, endDate);
+    const itemType = parseItemTypeQuery(String(req.query.itemType ?? ""));
+    const orderWhere = getOrderRangeWhere(startDate, endDate, itemType);
     const expenseWhere = getExpenseRangeWhere(startDate, endDate);
 
-    const [orders, expenses, pendingOrders, customerCount] = await Promise.all([
-      prisma.order.findMany({
-        where: orderWhere,
-        select: { total: true },
-      }),
+    const [expenses, pendingOrders, customerCount, orders, filteredItems] = await Promise.all([
       prisma.expense.findMany({
         where: expenseWhere,
         select: { amount: true },
@@ -56,16 +60,37 @@ reportsRouter.get(
         },
       }),
       prisma.customer.count({ where: { deletedAt: null } }),
+      itemType
+        ? Promise.resolve([])
+        : prisma.order.findMany({
+            where: orderWhere,
+            select: { id: true, total: true },
+          }),
+      itemType
+        ? prisma.orderItem.findMany({
+            where: {
+              itemType,
+              order: getOrderRangeWhere(startDate, endDate),
+            },
+            select: {
+              orderId: true,
+              subtotal: true,
+            },
+          })
+        : Promise.resolve([]),
     ]);
 
-    const totalRevenue = orders.reduce((sum, order) => sum + order.total, 0);
+    const totalRevenue = itemType
+      ? filteredItems.reduce((sum, item) => sum + item.subtotal, 0)
+      : orders.reduce((sum, order) => sum + order.total, 0);
     const totalExpense = expenses.reduce((sum, expense) => sum + expense.amount, 0);
+    const totalOrders = itemType ? new Set(filteredItems.map((item) => item.orderId)).size : orders.length;
 
     sendSuccess(res, {
       totalRevenue,
       totalExpense,
       totalProfit: totalRevenue - totalExpense,
-      totalOrders: orders.length,
+      totalOrders,
       pendingOrders,
       totalCustomers: customerCount,
     });
@@ -77,25 +102,59 @@ reportsRouter.get(
   asyncHandler(async (req, res) => {
     const startDate = String(req.query.startDate ?? "");
     const endDate = String(req.query.endDate ?? "");
-    const orders = await prisma.order.findMany({
-      where: getOrderRangeWhere(startDate, endDate),
-      select: {
-        createdAt: true,
-        total: true,
-      },
-      orderBy: { createdAt: "asc" },
-    });
+    const itemType = parseItemTypeQuery(String(req.query.itemType ?? ""));
+    const grouped = new Map<string, { date: string; revenue: number; orders: number; orderIds: Set<string> }>();
 
-    const grouped = new Map<string, { date: string; revenue: number; orders: number }>();
-    for (const order of orders) {
-      const key = toISODate(order.createdAt);
-      const current = grouped.get(key) ?? { date: key, revenue: 0, orders: 0 };
-      current.revenue += order.total;
-      current.orders += 1;
-      grouped.set(key, current);
+    if (!itemType) {
+      const orders = await prisma.order.findMany({
+        where: getOrderRangeWhere(startDate, endDate),
+        select: {
+          id: true,
+          createdAt: true,
+          total: true,
+        },
+        orderBy: { createdAt: "asc" },
+      });
+
+      for (const order of orders) {
+        const key = toISODate(order.createdAt);
+        const current = grouped.get(key) ?? { date: key, revenue: 0, orders: 0, orderIds: new Set<string>() };
+        current.revenue += order.total;
+        current.orderIds.add(order.id);
+        current.orders = current.orderIds.size;
+        grouped.set(key, current);
+      }
+    } else {
+      const items = await prisma.orderItem.findMany({
+        where: {
+          itemType,
+          order: getOrderRangeWhere(startDate, endDate),
+        },
+        select: {
+          orderId: true,
+          subtotal: true,
+          order: {
+            select: {
+              createdAt: true,
+            },
+          },
+        },
+      });
+
+      for (const item of items) {
+        const key = toISODate(item.order.createdAt);
+        const current = grouped.get(key) ?? { date: key, revenue: 0, orders: 0, orderIds: new Set<string>() };
+        current.revenue += item.subtotal;
+        current.orderIds.add(item.orderId);
+        current.orders = current.orderIds.size;
+        grouped.set(key, current);
+      }
     }
 
-    sendSuccess(res, [...grouped.values()]);
+    sendSuccess(
+      res,
+      [...grouped.values()].map(({ orderIds: _orderIds, ...rest }) => rest),
+    );
   }),
 );
 
@@ -105,9 +164,11 @@ reportsRouter.get(
     const startDate = String(req.query.startDate ?? "");
     const endDate = String(req.query.endDate ?? "");
     const limit = Math.min(Math.max(Number(req.query.limit ?? 10), 1), 50);
+    const itemType = parseItemTypeQuery(String(req.query.itemType ?? ""));
 
     const items = await prisma.orderItem.findMany({
       where: {
+        ...(itemType ? { itemType } : {}),
         order: getOrderRangeWhere(startDate, endDate),
       },
       select: {
@@ -136,20 +197,46 @@ reportsRouter.get(
   asyncHandler(async (req, res) => {
     const startDate = String(req.query.startDate ?? "");
     const endDate = String(req.query.endDate ?? "");
-    const orders = await prisma.order.findMany({
-      where: getOrderRangeWhere(startDate, endDate),
-      select: {
-        paymentMethod: true,
-        total: true,
-      },
-    });
+    const itemType = parseItemTypeQuery(String(req.query.itemType ?? ""));
 
     const grouped = new Map<string, { method: string; value: number }>();
-    for (const order of orders) {
-      const key = order.paymentMethod;
-      const current = grouped.get(key) ?? { method: key, value: 0 };
-      current.value += order.total;
-      grouped.set(key, current);
+    if (!itemType) {
+      const orders = await prisma.order.findMany({
+        where: getOrderRangeWhere(startDate, endDate),
+        select: {
+          paymentMethod: true,
+          total: true,
+        },
+      });
+
+      for (const order of orders) {
+        const key = order.paymentMethod;
+        const current = grouped.get(key) ?? { method: key, value: 0 };
+        current.value += order.total;
+        grouped.set(key, current);
+      }
+    } else {
+      const items = await prisma.orderItem.findMany({
+        where: {
+          itemType,
+          order: getOrderRangeWhere(startDate, endDate),
+        },
+        select: {
+          subtotal: true,
+          order: {
+            select: {
+              paymentMethod: true,
+            },
+          },
+        },
+      });
+
+      for (const item of items) {
+        const key = item.order.paymentMethod;
+        const current = grouped.get(key) ?? { method: key, value: 0 };
+        current.value += item.subtotal;
+        grouped.set(key, current);
+      }
     }
 
     sendSuccess(res, [...grouped.values()]);

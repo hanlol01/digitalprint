@@ -35,6 +35,14 @@ enum PaymentMethod {
   @@map("metode_pembayaran_enum")
 }
 
+enum TransactionItemType {
+  produk
+  jasa
+  display
+
+  @@map("jenis_item_transaksi_enum")
+}
+
 enum UserRole {
   owner
   admin
@@ -78,6 +86,7 @@ model User {
 
 model ProductCategory {
   id        String    @id @default(uuid())
+  code      String?   @unique @map("kode_kategori")
   name      String    @unique @map("nama")
   icon      String    @map("ikon")
   isActive  Boolean   @default(true) @map("aktif")
@@ -86,15 +95,92 @@ model ProductCategory {
   deletedAt DateTime? @map("dihapus_pada")
 
   products Product[]
+  services ServiceCatalog[]
+  displays DisplayCatalog[]
 
   @@index([deletedAt])
   @@map("kategori_produk")
 }
 
+model UnitMaster {
+  id        String    @id @default(uuid())
+  code      String    @unique @map("kode_satuan")
+  name      String    @map("nama_satuan")
+  isActive  Boolean   @default(true) @map("aktif")
+  createdAt DateTime  @default(now()) @map("dibuat_pada")
+  updatedAt DateTime  @updatedAt @map("diperbarui_pada")
+  deletedAt DateTime? @map("dihapus_pada")
+
+  products Product[]
+  variants ProductMaterialVariant[]
+  services ServiceCatalog[]
+  displays DisplayCatalog[]
+
+  @@index([deletedAt])
+  @@index([name])
+  @@map("master_satuan")
+}
+
+model FinishingMaster {
+  id        String    @id @default(uuid())
+  code      String    @unique @map("kode_finishing")
+  name      String    @map("nama_finishing")
+  isActive  Boolean   @default(true) @map("aktif")
+  createdAt DateTime  @default(now()) @map("dibuat_pada")
+  updatedAt DateTime  @updatedAt @map("diperbarui_pada")
+  deletedAt DateTime? @map("dihapus_pada")
+
+  variants ProductMaterialVariant[]
+  services ServiceCatalog[]
+  displays DisplayCatalog[]
+
+  @@index([deletedAt])
+  @@index([name])
+  @@map("master_finishing")
+}
+
+model ServiceMaterialMaster {
+  id        String    @id @default(uuid())
+  code      String    @unique @map("kode_material")
+  name      String    @map("nama_material")
+  isActive  Boolean   @default(true) @map("aktif")
+  createdAt DateTime  @default(now()) @map("dibuat_pada")
+  updatedAt DateTime  @updatedAt @map("diperbarui_pada")
+  deletedAt DateTime? @map("dihapus_pada")
+
+  services ServiceCatalog[]
+
+  @@index([deletedAt])
+  @@index([name])
+  @@map("master_material_jasa")
+}
+
+model FrameMaster {
+  id        String    @id @default(uuid())
+  code      String    @unique @map("kode_rangka")
+  name      String    @map("nama_rangka")
+  minStock  Decimal?  @db.Decimal(14, 4) @map("stok_minimum")
+  buyPrice  Int?      @map("harga_beli")
+  stock     Decimal?  @db.Decimal(14, 4) @map("stok")
+  isActive  Boolean   @default(true) @map("aktif")
+  createdAt DateTime  @default(now()) @map("dibuat_pada")
+  updatedAt DateTime  @updatedAt @map("diperbarui_pada")
+  deletedAt DateTime? @map("dihapus_pada")
+
+  displays DisplayCatalog[]
+
+  @@index([deletedAt])
+  @@index([name])
+  @@map("master_rangka")
+}
+
 model Product {
   id               String      @id @default(uuid())
+  code             String?     @unique @map("kode_produk")
+  legacyNumber     Int?        @unique @map("nomor_legacy")
   name             String      @map("nama")
   categoryId       String      @map("kategori_produk_id")
+  unitId           String?     @map("satuan_id")
   pricingUnit      PricingUnit @map("satuan_harga")
   hasCustomSize    Boolean     @default(false) @map("punya_ukuran_kustom")
   customWidth      Decimal?    @db.Decimal(14, 4) @map("panjang_kustom")
@@ -107,10 +193,14 @@ model Product {
   deletedAt        DateTime?   @map("dihapus_pada")
 
   category ProductCategory @relation(fields: [categoryId], references: [id])
+  unit     UnitMaster?     @relation(fields: [unitId], references: [id])
   variants ProductMaterialVariant[]
   orderItems OrderItem[]
+  services ServiceCatalog[]
+  displays DisplayCatalog[]
 
   @@index([categoryId])
+  @@index([unitId])
   @@index([deletedAt])
   @@index([name])
   @@map("produk")
@@ -118,29 +208,39 @@ model Product {
 
 model ProductMaterialVariant {
   id           String    @id @default(uuid())
+  code         String?   @unique @map("kode_varian")
   productId    String    @map("produk_id")
   materialId   String    @map("bahan_id")
+  unitId       String?   @map("satuan_id")
+  finishingId  String?   @map("finishing_id")
   name         String    @map("nama")
   costPrice    Int       @map("harga_modal")
   sellingPrice Int       @map("harga_jual")
+  minimumOrder Int       @default(1) @map("minimum_order")
+  estimateText String?   @map("estimasi_teks")
   isActive     Boolean   @default(true) @map("aktif")
   createdAt    DateTime  @default(now()) @map("dibuat_pada")
   updatedAt    DateTime  @updatedAt @map("diperbarui_pada")
   deletedAt    DateTime? @map("dihapus_pada")
 
-  product   Product  @relation(fields: [productId], references: [id])
-  material  Material @relation("BahanVarianProduk", fields: [materialId], references: [id])
+  product   Product          @relation(fields: [productId], references: [id])
+  material  Material         @relation("BahanVarianProduk", fields: [materialId], references: [id])
+  unit      UnitMaster?      @relation(fields: [unitId], references: [id])
+  finishing FinishingMaster? @relation(fields: [finishingId], references: [id])
   recipes   VariantMaterialRecipe[]
   orderItems OrderItem[]
 
   @@index([productId])
   @@index([materialId])
+  @@index([unitId])
+  @@index([finishingId])
   @@index([deletedAt])
   @@map("varian_bahan_produk")
 }
 
 model Material {
   id            String    @id @default(uuid())
+  code          String?   @unique @map("kode_bahan")
   name          String    @unique @map("nama")
   unit          String    @map("satuan")
   costPrice     Int       @default(0) @map("harga_modal")
@@ -155,11 +255,79 @@ model Material {
 
   recipes       VariantMaterialRecipe[]
   productVariants ProductMaterialVariant[] @relation("BahanVarianProduk")
+  displays DisplayCatalog[]
   stockMovements StockMovement[]
 
   @@index([deletedAt])
   @@index([name])
   @@map("bahan")
+}
+
+model ServiceCatalog {
+  id                String    @id @default(uuid())
+  code              String    @unique @map("kode_jasa")
+  productId         String    @map("produk_id")
+  categoryId        String    @map("kategori_produk_id")
+  unitId            String    @map("satuan_id")
+  serviceMaterialId String    @map("material_jasa_id")
+  finishingId       String    @map("finishing_id")
+  sellingPrice      Int       @map("harga_jual")
+  estimateText      String?   @map("estimasi_teks")
+  isActive          Boolean   @default(true) @map("aktif")
+  createdAt         DateTime  @default(now()) @map("dibuat_pada")
+  updatedAt         DateTime  @updatedAt @map("diperbarui_pada")
+  deletedAt         DateTime? @map("dihapus_pada")
+
+  product         Product               @relation(fields: [productId], references: [id])
+  category        ProductCategory       @relation(fields: [categoryId], references: [id])
+  unit            UnitMaster            @relation(fields: [unitId], references: [id])
+  serviceMaterial ServiceMaterialMaster @relation(fields: [serviceMaterialId], references: [id])
+  finishing       FinishingMaster       @relation(fields: [finishingId], references: [id])
+  orderItems      OrderItem[]
+
+  @@index([productId])
+  @@index([categoryId])
+  @@index([unitId])
+  @@index([serviceMaterialId])
+  @@index([finishingId])
+  @@index([deletedAt])
+  @@map("katalog_jasa")
+}
+
+model DisplayCatalog {
+  id           String    @id @default(uuid())
+  code         String    @unique @map("kode_display")
+  name         String    @map("nama_display")
+  productId    String    @map("produk_id")
+  categoryId   String    @map("kategori_produk_id")
+  unitId       String    @map("satuan_id")
+  frameId      String    @map("rangka_id")
+  materialId   String    @map("bahan_id")
+  finishingId  String    @map("finishing_id")
+  sellingPrice Int       @map("harga_jual")
+  minimumOrder Int       @default(1) @map("minimum_order")
+  estimateText String?   @map("estimasi_teks")
+  isActive     Boolean   @default(true) @map("aktif")
+  createdAt    DateTime  @default(now()) @map("dibuat_pada")
+  updatedAt    DateTime  @updatedAt @map("diperbarui_pada")
+  deletedAt    DateTime? @map("dihapus_pada")
+
+  product    Product         @relation(fields: [productId], references: [id])
+  category   ProductCategory @relation(fields: [categoryId], references: [id])
+  unit       UnitMaster      @relation(fields: [unitId], references: [id])
+  frame      FrameMaster     @relation(fields: [frameId], references: [id])
+  material   Material        @relation(fields: [materialId], references: [id])
+  finishing  FinishingMaster @relation(fields: [finishingId], references: [id])
+  orderItems OrderItem[]
+
+  @@index([productId])
+  @@index([categoryId])
+  @@index([unitId])
+  @@index([frameId])
+  @@index([materialId])
+  @@index([finishingId])
+  @@index([deletedAt])
+  @@map("katalog_display")
 }
 
 model VariantMaterialRecipe {
@@ -233,7 +401,13 @@ model OrderItem {
   id               String      @id @default(uuid())
   orderId          String      @map("pesanan_id")
   productId        String      @map("produk_id")
-  variantId        String      @map("varian_bahan_produk_id")
+  variantId        String?     @map("varian_bahan_produk_id")
+  serviceId        String?     @map("katalog_jasa_id")
+  displayId        String?     @map("katalog_display_id")
+  itemType         TransactionItemType @default(produk) @map("jenis_item")
+  itemLabel        String?     @map("label_item")
+  unitLabel        String?     @map("label_satuan")
+  referenceCode    String?     @map("kode_referensi")
   productName      String      @map("nama_produk")
   variantName      String      @map("nama_varian")
   pricingUnit      PricingUnit @map("satuan_harga")
@@ -250,11 +424,16 @@ model OrderItem {
 
   order   Order                  @relation(fields: [orderId], references: [id])
   product Product                @relation(fields: [productId], references: [id])
-  variant ProductMaterialVariant @relation(fields: [variantId], references: [id])
+  variant ProductMaterialVariant? @relation(fields: [variantId], references: [id])
+  service ServiceCatalog?        @relation(fields: [serviceId], references: [id])
+  display DisplayCatalog?        @relation(fields: [displayId], references: [id])
 
   @@index([orderId])
   @@index([productId])
   @@index([variantId])
+  @@index([serviceId])
+  @@index([displayId])
+  @@index([itemType])
   @@map("item_pesanan")
 }
 

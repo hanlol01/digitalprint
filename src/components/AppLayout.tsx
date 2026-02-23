@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, ShoppingCart, ClipboardList, Package, Users, 
-  Warehouse, Calculator, FileText, Printer, Menu, LogOut, ChevronLeft, ChevronRight
+  Warehouse, Calculator, FileText, Printer, Menu, LogOut, ChevronLeft, ChevronRight, Briefcase, PanelsTopLeft
 } from 'lucide-react';
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -11,6 +11,8 @@ const navItems = [
   { to: '/pos', icon: ShoppingCart, label: 'Kasir / POS' },
   { to: '/orders', icon: ClipboardList, label: 'Daftar Order' },
   { to: '/products', icon: Package, label: 'Produk' },
+  { to: '/services', icon: Briefcase, label: 'Jasa' },
+  { to: '/displays', icon: PanelsTopLeft, label: 'Display' },
   { to: '/customers', icon: Users, label: 'Pelanggan' },
   { to: '/materials', icon: Warehouse, label: 'Stok Bahan' },
   { to: '/calculator', icon: Calculator, label: 'Kalkulator Harga' },

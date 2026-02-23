@@ -4,8 +4,17 @@ import type { Product, PricingUnit } from "@/types";
 
 type ProductApi = {
   id: string;
+  code?: string | null;
+  legacyNumber?: number | null;
   name: string;
   categoryId: string;
+  unitId?: string | null;
+  unit?: {
+    id: string;
+    code: string;
+    name: string;
+    isActive?: boolean;
+  } | null;
   pricingUnit: PricingUnit;
   hasCustomSize: boolean;
   customWidth: number | null;
@@ -15,10 +24,27 @@ type ProductApi = {
   isActive: boolean;
   variants: Array<{
     id: string;
+    code?: string | null;
     materialId: string;
+    unitId?: string | null;
+    finishingId?: string | null;
     name: string;
     costPrice: number;
     sellingPrice: number;
+    minimumOrder?: number;
+    estimateText?: string | null;
+    unit?: {
+      id: string;
+      code: string;
+      name: string;
+      isActive?: boolean;
+    } | null;
+    finishing?: {
+      id: string;
+      code: string;
+      name: string;
+      isActive?: boolean;
+    } | null;
     material: {
       id: string;
       name: string;
@@ -52,8 +78,12 @@ const queryKey = ["products"] as const;
 
 const mapProduct = (product: ProductApi): Product => ({
   id: product.id,
+  code: product.code ?? null,
+  legacyNumber: product.legacyNumber ?? null,
   name: product.name,
   categoryId: product.categoryId,
+  unitId: product.unitId ?? null,
+  unit: product.unit ?? null,
   pricingUnit: product.pricingUnit,
   hasCustomSize: product.hasCustomSize,
   customWidth: product.customWidth,
@@ -63,11 +93,18 @@ const mapProduct = (product: ProductApi): Product => ({
   isActive: product.isActive,
   materialVariants: product.variants.map((variant) => ({
     id: variant.id,
+    code: variant.code ?? null,
     materialId: variant.materialId,
+    unitId: variant.unitId ?? null,
+    finishingId: variant.finishingId ?? null,
     name: variant.name,
     costPrice: variant.costPrice,
     sellingPrice: variant.sellingPrice,
     pricePerUnit: variant.sellingPrice,
+    minimumOrder: variant.minimumOrder ?? 1,
+    estimateText: variant.estimateText ?? null,
+    unit: variant.unit ?? null,
+    finishing: variant.finishing ?? null,
     material: variant.material
       ? {
           id: variant.material.id,
@@ -102,8 +139,11 @@ const mapProduct = (product: ProductApi): Product => ({
 });
 
 export type ProductPayload = {
+  code?: string;
+  legacyNumber?: number;
   name: string;
   categoryId: string;
+  unitId?: string;
   pricingUnit: PricingUnit;
   hasCustomSize: boolean;
   customWidth?: number;
@@ -112,8 +152,13 @@ export type ProductPayload = {
   estimatedMinutes: number;
   isActive?: boolean;
   variants: Array<{
+    code?: string;
     materialId: string;
+    unitId?: string;
+    finishingId?: string;
     name: string;
+    minimumOrder?: number;
+    estimateText?: string | null;
     recipes?: Array<{
       materialId: string;
       usagePerUnit: number;

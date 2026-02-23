@@ -15,14 +15,22 @@ const recipeSchema = z.object({
 });
 
 const variantSchema = z.object({
+  code: z.string().min(1).optional(),
   materialId: z.string().uuid(),
+  unitId: z.string().uuid().optional(),
+  finishingId: z.string().uuid().optional(),
   name: z.string().min(1),
+  minimumOrder: z.number().int().positive().default(1),
+  estimateText: z.string().max(100).optional().nullable(),
   recipes: z.array(recipeSchema).default([]),
 });
 
 const createProductSchema = z.object({
+  code: z.string().min(1).optional(),
+  legacyNumber: z.number().int().positive().optional(),
   name: z.string().min(1),
   categoryId: z.string().uuid(),
+  unitId: z.string().uuid().optional(),
   pricingUnit: z.nativeEnum(PricingUnit),
   hasCustomSize: z.boolean().default(false),
   customWidth: z.number().positive().optional(),
@@ -34,8 +42,11 @@ const createProductSchema = z.object({
 });
 
 const updateProductSchema = z.object({
+  code: z.string().min(1).optional(),
+  legacyNumber: z.number().int().positive().optional(),
   name: z.string().min(1).optional(),
   categoryId: z.string().uuid().optional(),
+  unitId: z.string().uuid().optional(),
   pricingUnit: z.nativeEnum(PricingUnit).optional(),
   hasCustomSize: z.boolean().optional(),
   customWidth: z.number().positive().optional(),
@@ -51,10 +62,13 @@ productsRouter.use(authenticate);
 
 const includeProduct = {
   category: true,
+  unit: true,
   variants: {
     where: { deletedAt: null, isActive: true },
     include: {
       material: true,
+      unit: true,
+      finishing: true,
       recipes: {
         include: {
           material: true,
@@ -70,6 +84,7 @@ const serializeProduct = (product: Prisma.ProductGetPayload<{ include: typeof in
     ...product,
     customWidth: product.customWidth ? toNumber(product.customWidth) : null,
     customHeight: product.customHeight ? toNumber(product.customHeight) : null,
+    unit: product.unit ?? null,
     variants: product.variants.map((variant) => ({
       ...variant,
       material: {
@@ -161,8 +176,11 @@ productsRouter.post(
     const created = await prisma.$transaction(async (tx) => {
       const product = await tx.product.create({
         data: {
+          code: body.code,
+          legacyNumber: body.legacyNumber,
           name: body.name,
           categoryId: body.categoryId,
+          unitId: body.unitId,
           pricingUnit: body.pricingUnit,
           hasCustomSize: body.hasCustomSize,
           customWidth: body.hasCustomSize ? body.customWidth : null,
@@ -179,15 +197,20 @@ productsRouter.post(
           throw new ApiError(400, "Harga bahan varian tidak ditemukan");
         }
 
-        const createdVariant = await tx.productMaterialVariant.create({
-          data: {
-            productId: product.id,
-            materialId: variant.materialId,
-            name: variant.name,
-            costPrice: materialPrice.costPrice,
-            sellingPrice: materialPrice.sellingPrice,
-          },
-        });
+          const createdVariant = await tx.productMaterialVariant.create({
+            data: {
+              code: variant.code,
+              productId: product.id,
+              materialId: variant.materialId,
+              unitId: variant.unitId,
+              finishingId: variant.finishingId,
+              name: variant.name,
+              costPrice: materialPrice.costPrice,
+              sellingPrice: materialPrice.sellingPrice,
+              minimumOrder: variant.minimumOrder,
+              estimateText: variant.estimateText ?? null,
+            },
+          });
 
         if (variant.recipes.length > 0) {
           await tx.variantMaterialRecipe.createMany({
@@ -249,8 +272,11 @@ productsRouter.patch(
       await tx.product.update({
         where: { id },
         data: {
+          code: body.code,
+          legacyNumber: body.legacyNumber,
           name: body.name,
           categoryId: body.categoryId,
+          unitId: body.unitId,
           pricingUnit: body.pricingUnit,
           hasCustomSize: body.hasCustomSize,
           customWidth:
@@ -283,11 +309,16 @@ productsRouter.patch(
 
           const createdVariant = await tx.productMaterialVariant.create({
             data: {
+              code: variant.code,
               productId: id,
               materialId: variant.materialId,
+              unitId: variant.unitId,
+              finishingId: variant.finishingId,
               name: variant.name,
               costPrice: materialPrice.costPrice,
               sellingPrice: materialPrice.sellingPrice,
+              minimumOrder: variant.minimumOrder,
+              estimateText: variant.estimateText ?? null,
             },
           });
 
