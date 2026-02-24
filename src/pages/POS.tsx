@@ -77,6 +77,32 @@ const pricingUnitLabel = (unit: string) =>
     per_pcs: "/pcs",
   })[unit] || "";
 
+type ServiceGroupKey = "a3" | "m2";
+type ServiceGroup = {
+  key: ServiceGroupKey;
+  label: string;
+  options: ServiceCatalog[];
+};
+type DisplayGroup = {
+  key: string;
+  label: string;
+  options: DisplayCatalog[];
+};
+
+const normalizeText = (value?: string | null): string => (value ?? "").trim().toLowerCase();
+
+const isCuttingPrintNCutService = (service: ServiceCatalog): boolean => {
+  const productName = normalizeText(service.product?.name);
+  return productName.includes("cutting/print n cut") || productName.includes("cutting print n cut");
+};
+
+const resolveServiceGroupKey = (service: ServiceCatalog): ServiceGroupKey | null => {
+  const unitName = normalizeText(service.unit?.name);
+  if (unitName === "a3") return "a3";
+  if (unitName === "m2") return "m2";
+  return null;
+};
+
 export default function POS() {
   const { data: categories = [] } = useCategories({ activeOnly: true });
   const { data: products = [] } = useProducts({ activeOnly: true });
@@ -85,13 +111,18 @@ export default function POS() {
   const createOrder = useCreateOrder();
 
   const [activeType, setActiveType] = useState<TransactionItemType>("produk");
-  const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [addItemOpen, setAddItemOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [selectedServiceGroup, setSelectedServiceGroup] = useState<ServiceGroup | null>(null);
   const [selectedService, setSelectedService] = useState<ServiceCatalog | null>(null);
+  const [selectedServiceMaterialId, setSelectedServiceMaterialId] = useState("");
+  const [selectedServiceFinishingId, setSelectedServiceFinishingId] = useState("");
+  const [selectedDisplayGroup, setSelectedDisplayGroup] = useState<DisplayGroup | null>(null);
+  const [selectedDisplayMaterialId, setSelectedDisplayMaterialId] = useState("");
+  const [selectedDisplayFinishingId, setSelectedDisplayFinishingId] = useState("");
   const [selectedDisplay, setSelectedDisplay] = useState<DisplayCatalog | null>(null);
   const [itemMaterial, setItemMaterial] = useState("");
   const [itemQty, setItemQty] = useState(1);
@@ -118,31 +149,138 @@ export default function POS() {
   );
 
   const filteredProducts = useMemo(() => {
-    let filtered = products;
-    if (selectedCategory !== "all") filtered = filtered.filter((item) => item.categoryId === selectedCategory);
+    let filtered = products.filter((item) => item.materialVariants.length > 0);
     if (searchQuery) filtered = filtered.filter((item) => item.name.toLowerCase().includes(searchQuery.toLowerCase()));
     return filtered;
-  }, [products, selectedCategory, searchQuery]);
+  }, [products, searchQuery]);
 
-  const filteredServices = useMemo(() => {
-    let filtered = services;
-    if (selectedCategory !== "all") filtered = filtered.filter((item) => item.categoryId === selectedCategory);
-    if (searchQuery) {
-      const key = searchQuery.toLowerCase();
-      filtered = filtered.filter((item) => item.code.toLowerCase().includes(key) || (item.product?.name ?? "").toLowerCase().includes(key));
-    }
-    return filtered;
-  }, [services, selectedCategory, searchQuery]);
+  const serviceGroups = useMemo(() => {
+    const grouped = new Map<ServiceGroupKey, ServiceCatalog[]>();
+    services.forEach((service) => {
+      if (!isCuttingPrintNCutService(service)) return;
+      const key = resolveServiceGroupKey(service);
+      if (!key) return;
+      const list = grouped.get(key) ?? [];
+      list.push(service);
+      grouped.set(key, list);
+    });
 
-  const filteredDisplays = useMemo(() => {
-    let filtered = displays;
-    if (selectedCategory !== "all") filtered = filtered.filter((item) => item.categoryId === selectedCategory);
-    if (searchQuery) {
-      const key = searchQuery.toLowerCase();
-      filtered = filtered.filter((item) => item.code.toLowerCase().includes(key) || item.name.toLowerCase().includes(key));
-    }
-    return filtered;
-  }, [displays, selectedCategory, searchQuery]);
+    const meta: Array<{ key: ServiceGroupKey; label: string }> = [
+      { key: "a3", label: "Jasa Cutting/Print n Cut A3" },
+      { key: "m2", label: "Jasa Cutting/Print n Cut m2" },
+    ];
+
+    return meta
+      .map((item) => ({
+        key: item.key,
+        label: item.label,
+        options: [...(grouped.get(item.key) ?? [])].sort((a, b) =>
+          a.code.localeCompare(b.code, "en", { numeric: true, sensitivity: "base" }),
+        ),
+      }))
+      .filter((item) => item.options.length > 0);
+  }, [services]);
+
+  const filteredServiceGroups = useMemo(() => {
+    if (!searchQuery) return serviceGroups;
+    const key = searchQuery.toLowerCase();
+    return serviceGroups.filter(
+      (group) =>
+        group.label.toLowerCase().includes(key) ||
+        group.options.some((option) => option.code.toLowerCase().includes(key)),
+    );
+  }, [serviceGroups, searchQuery]);
+
+  const displayGroups = useMemo(() => {
+    const grouped = new Map<string, DisplayGroup>();
+    displays.forEach((display) => {
+      const key = `${display.productId}:${normalizeText(display.name)}`;
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.options.push(display);
+      } else {
+        grouped.set(key, {
+          key,
+          label: display.name,
+          options: [display],
+        });
+      }
+    });
+
+    return [...grouped.values()]
+      .map((group) => ({
+        ...group,
+        options: [...group.options].sort((a, b) => a.code.localeCompare(b.code, "en", { numeric: true, sensitivity: "base" })),
+      }))
+      .sort((a, b) => {
+        const codeA = a.options[0]?.code ?? a.label;
+        const codeB = b.options[0]?.code ?? b.label;
+        return codeA.localeCompare(codeB, "en", { numeric: true, sensitivity: "base" });
+      });
+  }, [displays]);
+
+  const filteredDisplayGroups = useMemo(() => {
+    if (!searchQuery) return displayGroups;
+    const key = searchQuery.toLowerCase();
+    return displayGroups.filter(
+      (group) =>
+        group.label.toLowerCase().includes(key) ||
+        group.options.some(
+          (option) =>
+            option.code.toLowerCase().includes(key) ||
+            option.material?.name.toLowerCase().includes(key) ||
+            option.finishing?.name.toLowerCase().includes(key),
+        ),
+    );
+  }, [displayGroups, searchQuery]);
+
+  const serviceMaterialOptions = useMemo(() => {
+    if (!selectedServiceGroup) return [];
+    const map = new Map<string, NonNullable<ServiceCatalog["serviceMaterial"]>>();
+    selectedServiceGroup.options.forEach((option) => {
+      if (option.serviceMaterial && !map.has(option.serviceMaterialId)) {
+        map.set(option.serviceMaterialId, option.serviceMaterial);
+      }
+    });
+    return [...map.entries()].map(([id, material]) => ({ id, material }));
+  }, [selectedServiceGroup]);
+
+  const serviceFinishingOptions = useMemo(() => {
+    if (!selectedServiceGroup || !selectedServiceMaterialId) return [];
+    const map = new Map<string, NonNullable<ServiceCatalog["finishing"]>>();
+    selectedServiceGroup.options
+      .filter((option) => option.serviceMaterialId === selectedServiceMaterialId)
+      .forEach((option) => {
+        if (option.finishing && !map.has(option.finishingId)) {
+          map.set(option.finishingId, option.finishing);
+        }
+      });
+    return [...map.entries()].map(([id, finishing]) => ({ id, finishing }));
+  }, [selectedServiceGroup, selectedServiceMaterialId]);
+
+  const displayMaterialOptions = useMemo(() => {
+    if (!selectedDisplayGroup) return [];
+    const map = new Map<string, NonNullable<DisplayCatalog["material"]>>();
+    selectedDisplayGroup.options.forEach((option) => {
+      if (option.material && !map.has(option.materialId)) {
+        map.set(option.materialId, option.material);
+      }
+    });
+    return [...map.entries()].map(([id, material]) => ({ id, material }));
+  }, [selectedDisplayGroup]);
+
+  const displayFinishingOptions = useMemo(() => {
+    if (!selectedDisplayGroup || !selectedDisplayMaterialId) return [];
+    const map = new Map<string, NonNullable<DisplayCatalog["finishing"]>>();
+    selectedDisplayGroup.options
+      .filter((option) => option.materialId === selectedDisplayMaterialId)
+      .forEach((option) => {
+        if (option.finishing && !map.has(option.finishingId)) {
+          map.set(option.finishingId, option.finishing);
+        }
+      });
+    return [...map.entries()].map(([id, finishing]) => ({ id, finishing }));
+  }, [selectedDisplayGroup, selectedDisplayMaterialId]);
 
   const cartTotal = useMemo(() => cart.reduce((sum, item) => sum + item.subtotal, 0), [cart]);
   const grandTotal = Math.max(cartTotal - discount, 0);
@@ -161,7 +299,13 @@ export default function POS() {
 
   const openAddProduct = (product: Product) => {
     setSelectedProduct(product);
+    setSelectedServiceGroup(null);
     setSelectedService(null);
+    setSelectedServiceMaterialId("");
+    setSelectedServiceFinishingId("");
+    setSelectedDisplayGroup(null);
+    setSelectedDisplayMaterialId("");
+    setSelectedDisplayFinishingId("");
     setSelectedDisplay(null);
     setItemMaterial(product.materialVariants[0]?.id || "");
     setItemQty(1);
@@ -172,20 +316,84 @@ export default function POS() {
     setAddItemOpen(true);
   };
 
-  const openAddService = (service: ServiceCatalog) => {
+  const openAddServiceGroup = (group: ServiceGroup) => {
     setSelectedProduct(null);
-    setSelectedService(service);
+    setSelectedServiceGroup(group);
+    const firstOption = group.options[0] ?? null;
+    setSelectedService(firstOption);
+    setSelectedServiceMaterialId(firstOption?.serviceMaterialId ?? "");
+    setSelectedServiceFinishingId(firstOption?.finishingId ?? "");
+    setSelectedDisplayGroup(null);
+    setSelectedDisplayMaterialId("");
+    setSelectedDisplayFinishingId("");
     setSelectedDisplay(null);
     resetItemForm();
     setAddItemOpen(true);
   };
 
-  const openAddDisplay = (display: DisplayCatalog) => {
+  const openAddDisplayGroup = (group: DisplayGroup) => {
     setSelectedProduct(null);
+    setSelectedServiceGroup(null);
     setSelectedService(null);
-    setSelectedDisplay(display);
+    setSelectedServiceMaterialId("");
+    setSelectedServiceFinishingId("");
+    setSelectedDisplayGroup(group);
+    const firstOption = group.options[0] ?? null;
+    setSelectedDisplay(firstOption);
+    setSelectedDisplayMaterialId(firstOption?.materialId ?? "");
+    setSelectedDisplayFinishingId(firstOption?.finishingId ?? "");
     resetItemForm();
     setAddItemOpen(true);
+  };
+
+  const handleSelectServiceMaterial = (materialId: string) => {
+    setSelectedServiceMaterialId(materialId);
+    if (!selectedServiceGroup) {
+      setSelectedServiceFinishingId("");
+      setSelectedService(null);
+      return;
+    }
+    const firstMatch = selectedServiceGroup.options.find((option) => option.serviceMaterialId === materialId) ?? null;
+    setSelectedServiceFinishingId(firstMatch?.finishingId ?? "");
+    setSelectedService(firstMatch);
+  };
+
+  const handleSelectServiceFinishing = (finishingId: string) => {
+    setSelectedServiceFinishingId(finishingId);
+    if (!selectedServiceGroup) {
+      setSelectedService(null);
+      return;
+    }
+    const match =
+      selectedServiceGroup.options.find(
+        (option) => option.serviceMaterialId === selectedServiceMaterialId && option.finishingId === finishingId,
+      ) ?? null;
+    setSelectedService(match);
+  };
+
+  const handleSelectDisplayMaterial = (materialId: string) => {
+    setSelectedDisplayMaterialId(materialId);
+    if (!selectedDisplayGroup) {
+      setSelectedDisplayFinishingId("");
+      setSelectedDisplay(null);
+      return;
+    }
+    const firstMatch = selectedDisplayGroup.options.find((option) => option.materialId === materialId) ?? null;
+    setSelectedDisplayFinishingId(firstMatch?.finishingId ?? "");
+    setSelectedDisplay(firstMatch);
+  };
+
+  const handleSelectDisplayFinishing = (finishingId: string) => {
+    setSelectedDisplayFinishingId(finishingId);
+    if (!selectedDisplayGroup) {
+      setSelectedDisplay(null);
+      return;
+    }
+    const match =
+      selectedDisplayGroup.options.find(
+        (option) => option.materialId === selectedDisplayMaterialId && option.finishingId === finishingId,
+      ) ?? null;
+    setSelectedDisplay(match);
   };
 
   const removeFromCart = (id: string) => setCart((prev) => prev.filter((item) => item.id !== id));
@@ -194,7 +402,7 @@ export default function POS() {
     setPaymentOpen(true);
   };
 
-  const dialogType: TransactionItemType | null = selectedProduct ? "produk" : selectedService ? "jasa" : selectedDisplay ? "display" : null;
+  const dialogType: TransactionItemType | null = selectedProduct ? "produk" : selectedServiceGroup ? "jasa" : selectedDisplayGroup ? "display" : null;
   const dialogAreaMode =
     dialogType === "produk" ? Boolean(selectedProduct?.hasCustomSize) : dialogType === "jasa" ? isAreaUnitName(selectedService?.unit?.name) : dialogType === "display" ? isAreaUnitName(selectedDisplay?.unit?.name) : false;
   const dialogPrice =
@@ -243,6 +451,11 @@ export default function POS() {
       return;
     }
 
+    if (selectedServiceGroup && !selectedService) {
+      toast.error("Kombinasi material dan finishing jasa belum valid");
+      return;
+    }
+
     if (selectedService) {
       const areaMode = isAreaUnitName(selectedService.unit?.name);
       if (areaMode && (!itemWidth || !itemHeight)) return toast.error("Panjang dan lebar wajib diisi");
@@ -267,7 +480,12 @@ export default function POS() {
         },
       ]);
       setAddItemOpen(false);
-      toast.success(`${selectedService.code} ditambahkan ke keranjang`);
+      toast.success(`${selectedServiceGroup?.label ?? selectedService.code} ditambahkan ke keranjang`);
+      return;
+    }
+
+    if (selectedDisplayGroup && !selectedDisplay) {
+      toast.error("Kombinasi bahan dan finishing display belum valid");
       return;
     }
 
@@ -296,7 +514,7 @@ export default function POS() {
         },
       ]);
       setAddItemOpen(false);
-      toast.success(`${selectedDisplay.name} ditambahkan ke keranjang`);
+      toast.success(`${selectedDisplayGroup?.label ?? selectedDisplay.name} ditambahkan ke keranjang`);
     }
   };
 
@@ -386,32 +604,6 @@ export default function POS() {
           <Input placeholder={`Cari ${typeLabel[activeType]}...`} value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="bg-card" />
         </div>
 
-        <div className="pos-category-scroll flex gap-2 mb-3 pb-1 shrink-0 min-w-0">
-          <button
-            onClick={() => setSelectedCategory("all")}
-            className={`px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap shrink-0 transition-all ${
-              selectedCategory === "all" ? "bg-primary text-primary-foreground shadow-md" : "bg-card text-muted-foreground hover:bg-muted border border-border"
-            }`}
-          >
-            Semua
-          </button>
-          {categories.map((category) => {
-            const categoryIcon = sanitizeCategoryIcon(category.icon);
-            return (
-              <button
-                key={category.id}
-                onClick={() => setSelectedCategory(category.id)}
-                className={`px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap shrink-0 transition-all ${
-                  selectedCategory === category.id ? "bg-primary text-primary-foreground shadow-md" : "bg-card text-muted-foreground hover:bg-muted border border-border"
-                }`}
-              >
-                {categoryIcon ? `${categoryIcon} ` : ""}
-                {category.name}
-              </button>
-            );
-          })}
-        </div>
-
         <div className="flex-1 overflow-y-auto grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 auto-rows-max">
           {activeType === "produk" &&
             filteredProducts.map((product) => {
@@ -428,31 +620,36 @@ export default function POS() {
               );
             })}
           {activeType === "jasa" &&
-            filteredServices.map((service) => (
-              <button key={service.id} onClick={() => openAddService(service)} className="pos-product-card text-left">
-                <span className={`badge-status ${typeBadgeClass.jasa}`}>Jasa</span>
-                <h4 className="font-semibold text-sm text-foreground leading-tight mt-2">{service.code}</h4>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {service.product?.name} | {service.serviceMaterial?.name}
-                </p>
-                <p className="text-primary font-bold text-sm mt-1">
-                  {formatCurrency(service.sellingPrice)}
-                  <span className="text-muted-foreground font-normal text-xs">/{service.unit?.name ?? "-"}</span>
-                </p>
-              </button>
-            ))}
+            filteredServiceGroups.map((group) => {
+              const minPrice = Math.min(...group.options.map((item) => item.sellingPrice));
+              return (
+                <button key={group.key} onClick={() => openAddServiceGroup(group)} className="pos-product-card text-left">
+                  <span className={`badge-status ${typeBadgeClass.jasa}`}>Jasa</span>
+                  <h4 className="font-semibold text-sm text-foreground leading-tight mt-2">{group.label}</h4>
+                  <p className="text-xs text-muted-foreground mt-1">{group.options.length} kombinasi material/finishing</p>
+                  <p className="text-primary font-bold text-sm mt-1">
+                    Mulai {formatCurrency(minPrice)}
+                    <span className="text-muted-foreground font-normal text-xs">/{group.key.toUpperCase()}</span>
+                  </p>
+                </button>
+              );
+            })}
           {activeType === "display" &&
-            filteredDisplays.map((display) => (
-              <button key={display.id} onClick={() => openAddDisplay(display)} className="pos-product-card text-left">
+            filteredDisplayGroups.map((group) => {
+              const minPrice = Math.min(...group.options.map((item) => item.sellingPrice));
+              const unitName = group.options[0]?.unit?.name ?? "-";
+              return (
+              <button key={group.key} onClick={() => openAddDisplayGroup(group)} className="pos-product-card text-left">
                 <span className={`badge-status ${typeBadgeClass.display}`}>Display</span>
-                <h4 className="font-semibold text-sm text-foreground leading-tight mt-2">{display.name}</h4>
-                <p className="text-xs text-muted-foreground mt-1">{display.code}</p>
+                <h4 className="font-semibold text-sm text-foreground leading-tight mt-2">{group.label}</h4>
+                <p className="text-xs text-muted-foreground mt-1">{group.options.length} kombinasi bahan/finishing</p>
                 <p className="text-primary font-bold text-sm mt-1">
-                  {formatCurrency(display.sellingPrice)}
-                  <span className="text-muted-foreground font-normal text-xs">/{display.unit?.name ?? "-"}</span>
+                  Mulai {formatCurrency(minPrice)}
+                  <span className="text-muted-foreground font-normal text-xs">/{unitName}</span>
                 </p>
               </button>
-            ))}
+              );
+            })}
         </div>
       </div>
 
@@ -516,14 +713,84 @@ export default function POS() {
               {dialogType === "produk"
                 ? selectedProduct?.name
                 : dialogType === "jasa"
-                  ? selectedService?.code
+                  ? selectedServiceGroup?.label
                   : dialogType === "display"
-                    ? selectedDisplay?.name
+                    ? selectedDisplayGroup?.label
                     : "Item"}
             </DialogTitle>
           </DialogHeader>
           {dialogType && (
             <div className="space-y-4">
+              {dialogType === "jasa" && selectedServiceGroup ? (
+                <>
+                  <div>
+                    <label className="text-sm font-medium text-foreground mb-1.5 block">Material</label>
+                    <Select value={selectedServiceMaterialId} onValueChange={handleSelectServiceMaterial}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Pilih material" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {serviceMaterialOptions.map((entry) => (
+                          <SelectItem key={entry.id} value={entry.id}>
+                            {entry.material.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-foreground mb-1.5 block">Finishing</label>
+                    <Select value={selectedServiceFinishingId} onValueChange={handleSelectServiceFinishing}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Pilih finishing" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {serviceFinishingOptions.map((entry) => (
+                          <SelectItem key={entry.id} value={entry.id}>
+                            {entry.finishing.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              ) : null}
+
+              {dialogType === "display" && selectedDisplayGroup ? (
+                <>
+                  <div>
+                    <label className="text-sm font-medium text-foreground mb-1.5 block">Bahan</label>
+                    <Select value={selectedDisplayMaterialId} onValueChange={handleSelectDisplayMaterial}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Pilih bahan" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {displayMaterialOptions.map((entry) => (
+                          <SelectItem key={entry.id} value={entry.id}>
+                            {entry.material.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-foreground mb-1.5 block">Finishing</label>
+                    <Select value={selectedDisplayFinishingId} onValueChange={handleSelectDisplayFinishing}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Pilih finishing" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {displayFinishingOptions.map((entry) => (
+                          <SelectItem key={entry.id} value={entry.id}>
+                            {entry.finishing.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              ) : null}
+
               {dialogType === "produk" && selectedProduct?.materialVariants.length ? (
                 <div>
                   <label className="text-sm font-medium text-foreground mb-1.5 block">Bahan</label>
@@ -545,7 +812,12 @@ export default function POS() {
 
               <div>
                 <label className="text-sm font-medium text-foreground mb-1.5 block">Jumlah</label>
-                <Input type="number" min={1} value={itemQty} onChange={(e) => setItemQty(Number(e.target.value))} />
+                <Input
+                  type="number"
+                  min={dialogType === "display" ? Math.max(selectedDisplay?.minimumOrder ?? 1, 1) : 1}
+                  value={itemQty}
+                  onChange={(e) => setItemQty(Number(e.target.value))}
+                />
               </div>
 
               {dialogAreaMode ? (
