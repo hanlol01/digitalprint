@@ -10,11 +10,20 @@ import { formatCurrency } from "@/lib/format";
 import { toast } from "sonner";
 import type { MaterialStock } from "@/types";
 
-const emptyMaterial: Omit<MaterialStock, "id"> = {
+type MaterialForm = {
+  name: string;
+  unit: string;
+  costPrice: number;
+  currentStock: number;
+  minStock: number;
+  lastRestocked: string;
+  isActive: boolean;
+};
+
+const emptyMaterial: MaterialForm = {
   name: "",
   unit: "",
   costPrice: 0,
-  sellingPrice: 0,
   currentStock: 0,
   minStock: 0,
   lastRestocked: new Date().toISOString(),
@@ -39,7 +48,7 @@ export default function Materials() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<MaterialStock | null>(null);
   const [deletingMaterial, setDeletingMaterial] = useState<MaterialStock | null>(null);
-  const [form, setForm] = useState<Omit<MaterialStock, "id">>(emptyMaterial);
+  const [form, setForm] = useState<MaterialForm>(emptyMaterial);
 
   const { data: materials = [], isLoading } = useMaterials();
   const createMaterial = useCreateMaterial();
@@ -53,8 +62,6 @@ export default function Materials() {
   }, [materials, searchQuery]);
 
   const lowStock = useMemo(() => materials.filter((item) => item.currentStock <= item.minStock), [materials]);
-  const isSellingBelowCost = form.sellingPrice < form.costPrice;
-  const isPriceMissing = form.costPrice <= 0 || form.sellingPrice <= 0;
 
   const openCreate = () => {
     setEditingMaterial(null);
@@ -69,11 +76,10 @@ export default function Materials() {
       name: material.name,
       unit: material.unit,
       costPrice: material.costPrice ?? 0,
-      sellingPrice: material.sellingPrice ?? 0,
       currentStock: material.currentStock,
       minStock: material.minStock,
       lastRestocked: material.lastRestocked,
-      isActive: material.isActive,
+      isActive: material.isActive ?? true,
     });
     setSubmitAttempted(false);
     setDialogOpen(true);
@@ -89,16 +95,12 @@ export default function Materials() {
       toast.error("Satuan wajib diisi");
       return;
     }
-    if (isPriceMissing) {
-      toast.error("Harga modal dan harga jual wajib diisi");
+    if (form.costPrice <= 0) {
+      toast.error("Harga modal wajib diisi");
       return;
     }
-    if (form.currentStock < 0 || form.minStock < 0 || form.costPrice < 0 || form.sellingPrice < 0) {
+    if (form.currentStock < 0 || form.minStock < 0 || form.costPrice < 0) {
       toast.error("Nilai stok dan harga tidak boleh kurang dari 0");
-      return;
-    }
-    if (isSellingBelowCost) {
-      toast.error("Harga jual tidak boleh lebih kecil dari harga modal");
       return;
     }
 
@@ -109,7 +111,6 @@ export default function Materials() {
           name: form.name,
           unit: form.unit,
           costPrice: form.costPrice,
-          sellingPrice: form.sellingPrice,
           minStock: form.minStock,
           lastRestocked: form.lastRestocked,
           isActive: form.isActive,
@@ -120,7 +121,6 @@ export default function Materials() {
           name: form.name,
           unit: form.unit,
           costPrice: form.costPrice,
-          sellingPrice: form.sellingPrice,
           currentStock: form.currentStock,
           minStock: form.minStock,
           lastRestocked: form.lastRestocked,
@@ -206,9 +206,8 @@ export default function Materials() {
                     </div>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2 mb-2 text-xs">
+                <div className="grid grid-cols-1 gap-2 mb-2 text-xs">
                   <p className="text-muted-foreground">Modal: {formatCurrency(material.costPrice ?? 0)}</p>
-                  <p className="text-right text-muted-foreground">Jual: {formatCurrency(material.sellingPrice ?? 0)}</p>
                 </div>
                 <div className="flex items-end justify-between mb-2">
                   <div>
@@ -269,7 +268,7 @@ export default function Materials() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3">
               <div className="space-y-2">
                 <Label>Harga Modal</Label>
                 <div className="relative">
@@ -284,22 +283,6 @@ export default function Materials() {
                   />
                 </div>
                 {submitAttempted && form.costPrice <= 0 && <p className="text-xs text-destructive">Harga modal wajib diisi.</p>}
-              </div>
-              <div className="space-y-2">
-                <Label>Harga Jual</Label>
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">Rp</span>
-                  <Input
-                    type="text"
-                    inputMode="numeric"
-                    value={formatCurrencyInput(form.sellingPrice)}
-                    onChange={(e) => setForm((prev) => ({ ...prev, sellingPrice: parseCurrencyInput(e.target.value) }))}
-                    placeholder="Masukkan harga jual"
-                    className="pl-10"
-                  />
-                </div>
-                {submitAttempted && form.sellingPrice <= 0 && <p className="text-xs text-destructive">Harga jual wajib diisi.</p>}
-                {submitAttempted && isSellingBelowCost && <p className="text-xs text-destructive">Harga jual harus lebih besar atau sama dengan harga modal.</p>}
               </div>
             </div>
 

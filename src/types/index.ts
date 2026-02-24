@@ -168,7 +168,7 @@ export interface DisplayCatalog {
   categoryId: string;
   unitId: string;
   frameId: string;
-  materialId: string;
+  materialId: string | null;
   finishingId: string;
   sellingPrice: number;
   minimumOrder: number;

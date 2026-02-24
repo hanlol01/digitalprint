@@ -12,7 +12,7 @@ import { useCustomers } from "@/hooks/useCustomers";
 import { useServices } from "@/hooks/useServices";
 import { useDisplays } from "@/hooks/useDisplays";
 import { formatCurrency } from "@/lib/format";
-import { PAYMENT_METHOD_LABELS, type CartItem, type DisplayCatalog, type PaymentMethod, type Product, type ServiceCatalog, type TransactionItemType } from "@/types";
+import { PAYMENT_METHOD_LABELS, type CartItem, type DisplayCatalog, type MaterialVariant, type PaymentMethod, type Product, type ServiceCatalog, type TransactionItemType } from "@/types";
 import { toast } from "sonner";
 
 const normalizePhoneNumber = (value: string): string => {
@@ -59,9 +59,8 @@ const createFallbackProduct = (id: string, name: string, categoryId: string): Pr
   isActive: true,
 });
 
-const calculateProductSubtotal = (product: Product, price: number, qty: number, width?: number, height?: number, finishing?: boolean): number => {
-  let total = (product.pricingUnit === "per_meter" || product.pricingUnit === "per_cm") && width && height ? width * height * qty * price : qty * price;
-  if (finishing && product.finishingCost > 0) total += product.finishingCost;
+const calculateProductSubtotal = (price: number, qty: number, isArea: boolean, width?: number, height?: number): number => {
+  const total = isArea && width && height ? width * height * qty * price : qty * price;
   return Math.round(total);
 };
 
@@ -76,6 +75,10 @@ const pricingUnitLabel = (unit: string) =>
     per_cm: "/cm2",
     per_pcs: "/pcs",
   })[unit] || "";
+const NO_LAMINATION_FINISHING_CODE = "fns-009";
+const PRODUCT_FINISHING_UNSELECTED = "__unselected__";
+const PRODUCT_FINISHING_NONE = "__none__";
+const DISPLAY_MATERIAL_NONE = "__none__";
 
 type ServiceGroupKey = "a3" | "m2";
 type ServiceGroup = {
@@ -88,8 +91,57 @@ type DisplayGroup = {
   label: string;
   options: DisplayCatalog[];
 };
+type ProductMaterialOption = {
+  materialId: string;
+  materialCode: string | null;
+  materialName: string;
+  baseVariant: MaterialVariant | null;
+};
+type ProductFinishingOption = {
+  finishingValue: string;
+  finishingId: string | null;
+  finishingName: string;
+  sellingPrice: number;
+  unitName: string | null;
+};
 
 const normalizeText = (value?: string | null): string => (value ?? "").trim().toLowerCase();
+const unitSuffixFromName = (value?: string | null): string => {
+  const unitName = value?.trim();
+  return unitName ? `/${unitName}` : "";
+};
+const normalizeDisplayMaterialValue = (materialId?: string | null): string => materialId ?? DISPLAY_MATERIAL_NONE;
+
+const compareByCodeThenName = (a: { code?: string | null; name: string }, b: { code?: string | null; name: string }): number => {
+  const codeA = (a.code ?? "").trim();
+  const codeB = (b.code ?? "").trim();
+  if (codeA && codeB) return codeA.localeCompare(codeB, "en", { numeric: true, sensitivity: "base" });
+  if (codeA) return -1;
+  if (codeB) return 1;
+  return a.name.localeCompare(b.name, "id", { sensitivity: "base" });
+};
+
+const buildProductMaterialOptions = (product: Product): ProductMaterialOption[] => {
+  const grouped = new Map<string, MaterialVariant[]>();
+  product.materialVariants.forEach((variant) => {
+    const list = grouped.get(variant.materialId) ?? [];
+    list.push(variant);
+    grouped.set(variant.materialId, list);
+  });
+
+  return [...grouped.entries()]
+    .map(([materialId, variants]) => {
+      const sorted = [...variants].sort((a, b) => (a.code ?? "").localeCompare(b.code ?? "", "en", { numeric: true, sensitivity: "base" }));
+      const baseVariant =
+        sorted.find((variant) => normalizeText(variant.finishing?.code) === NO_LAMINATION_FINISHING_CODE) ??
+        sorted.find((variant) => !variant.finishingId) ??
+        sorted[0];
+      const materialCode = baseVariant?.material?.code ?? sorted.find((item) => item.material?.code)?.material?.code ?? null;
+      const materialName = baseVariant?.material?.name ?? baseVariant?.name ?? "-";
+      return { materialId, materialCode, materialName, baseVariant: baseVariant ?? null };
+    })
+    .sort((a, b) => compareByCodeThenName({ code: a.materialCode, name: a.materialName }, { code: b.materialCode, name: b.materialName }));
+};
 
 const isCuttingPrintNCutService = (service: ServiceCatalog): boolean => {
   const productName = normalizeText(service.product?.name);
@@ -125,11 +177,11 @@ export default function POS() {
   const [selectedDisplayFinishingId, setSelectedDisplayFinishingId] = useState("");
   const [selectedDisplay, setSelectedDisplay] = useState<DisplayCatalog | null>(null);
   const [itemMaterial, setItemMaterial] = useState("");
+  const [selectedProductFinishingId, setSelectedProductFinishingId] = useState(PRODUCT_FINISHING_UNSELECTED);
   const [itemQty, setItemQty] = useState(1);
   const [itemWidth, setItemWidth] = useState(1);
   const [itemHeight, setItemHeight] = useState(1);
   const [itemNotes, setItemNotes] = useState("");
-  const [itemFinishing, setItemFinishing] = useState(false);
   const [discount, setDiscount] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [amountPaid, setAmountPaid] = useState(0);
@@ -153,6 +205,50 @@ export default function POS() {
     if (searchQuery) filtered = filtered.filter((item) => item.name.toLowerCase().includes(searchQuery.toLowerCase()));
     return filtered;
   }, [products, searchQuery]);
+
+  const productMaterialOptions = useMemo(() => {
+    if (!selectedProduct) return [];
+    return buildProductMaterialOptions(selectedProduct);
+  }, [selectedProduct]);
+
+  const selectedProductMaterialOption = useMemo(
+    () => productMaterialOptions.find((option) => option.materialId === itemMaterial) ?? productMaterialOptions[0] ?? null,
+    [productMaterialOptions, itemMaterial],
+  );
+
+  const productFinishingOptions = useMemo(() => {
+    if (!selectedProduct || !selectedProductMaterialOption) return [];
+    const map = new Map<string, ProductFinishingOption>();
+    selectedProduct.materialVariants
+      .filter((variant) => variant.materialId === selectedProductMaterialOption.materialId)
+      .forEach((variant) => {
+        const finishingId = variant.finishingId ?? null;
+        const finishingValue = finishingId ?? PRODUCT_FINISHING_NONE;
+        if (!map.has(finishingValue)) {
+          map.set(finishingValue, {
+            finishingValue,
+            finishingId,
+            finishingName: variant.finishing?.name ?? "Tanpa Finishing",
+            sellingPrice: variant.sellingPrice,
+            unitName: variant.unit?.name ?? selectedProduct.unit?.name ?? null,
+          });
+        }
+      });
+    return [...map.values()].sort((a, b) => a.finishingName.localeCompare(b.finishingName, "id", { sensitivity: "base" }));
+  }, [selectedProduct, selectedProductMaterialOption]);
+
+  const selectedProductVariant = useMemo(() => {
+    if (!selectedProduct || !selectedProductMaterialOption) return null;
+    if (selectedProductFinishingId === PRODUCT_FINISHING_UNSELECTED) return null;
+    const selectedFinishingId = selectedProductFinishingId === PRODUCT_FINISHING_NONE ? null : selectedProductFinishingId;
+    return (
+      selectedProduct.materialVariants.find(
+        (variant) =>
+          variant.materialId === selectedProductMaterialOption.materialId &&
+          (variant.finishingId ?? null) === selectedFinishingId,
+      ) ?? null
+    );
+  }, [selectedProduct, selectedProductMaterialOption, selectedProductFinishingId]);
 
   const serviceGroups = useMemo(() => {
     const grouped = new Map<ServiceGroupKey, ServiceCatalog[]>();
@@ -260,20 +356,21 @@ export default function POS() {
 
   const displayMaterialOptions = useMemo(() => {
     if (!selectedDisplayGroup) return [];
-    const map = new Map<string, NonNullable<DisplayCatalog["material"]>>();
+    const map = new Map<string, string>();
     selectedDisplayGroup.options.forEach((option) => {
-      if (option.material && !map.has(option.materialId)) {
-        map.set(option.materialId, option.material);
+      const key = normalizeDisplayMaterialValue(option.materialId);
+      if (!map.has(key)) {
+        map.set(key, option.material?.name ?? "Tanpa Bahan");
       }
     });
-    return [...map.entries()].map(([id, material]) => ({ id, material }));
+    return [...map.entries()].map(([id, label]) => ({ id, label }));
   }, [selectedDisplayGroup]);
 
   const displayFinishingOptions = useMemo(() => {
     if (!selectedDisplayGroup || !selectedDisplayMaterialId) return [];
     const map = new Map<string, NonNullable<DisplayCatalog["finishing"]>>();
     selectedDisplayGroup.options
-      .filter((option) => option.materialId === selectedDisplayMaterialId)
+      .filter((option) => normalizeDisplayMaterialValue(option.materialId) === selectedDisplayMaterialId)
       .forEach((option) => {
         if (option.finishing && !map.has(option.finishingId)) {
           map.set(option.finishingId, option.finishing);
@@ -290,14 +387,15 @@ export default function POS() {
 
   const resetItemForm = () => {
     setItemMaterial("");
+    setSelectedProductFinishingId(PRODUCT_FINISHING_UNSELECTED);
     setItemQty(1);
     setItemWidth(1);
     setItemHeight(1);
     setItemNotes("");
-    setItemFinishing(false);
   };
 
   const openAddProduct = (product: Product) => {
+    const initialMaterialId = buildProductMaterialOptions(product)[0]?.materialId ?? "";
     setSelectedProduct(product);
     setSelectedServiceGroup(null);
     setSelectedService(null);
@@ -307,12 +405,12 @@ export default function POS() {
     setSelectedDisplayMaterialId("");
     setSelectedDisplayFinishingId("");
     setSelectedDisplay(null);
-    setItemMaterial(product.materialVariants[0]?.id || "");
+    setItemMaterial(initialMaterialId);
+    setSelectedProductFinishingId(PRODUCT_FINISHING_UNSELECTED);
     setItemQty(1);
     setItemWidth(1);
     setItemHeight(1);
     setItemNotes("");
-    setItemFinishing(false);
     setAddItemOpen(true);
   };
 
@@ -340,10 +438,15 @@ export default function POS() {
     setSelectedDisplayGroup(group);
     const firstOption = group.options[0] ?? null;
     setSelectedDisplay(firstOption);
-    setSelectedDisplayMaterialId(firstOption?.materialId ?? "");
+    setSelectedDisplayMaterialId(firstOption ? normalizeDisplayMaterialValue(firstOption.materialId) : "");
     setSelectedDisplayFinishingId(firstOption?.finishingId ?? "");
     resetItemForm();
     setAddItemOpen(true);
+  };
+
+  const handleSelectProductMaterial = (materialId: string) => {
+    setItemMaterial(materialId);
+    setSelectedProductFinishingId(PRODUCT_FINISHING_UNSELECTED);
   };
 
   const handleSelectServiceMaterial = (materialId: string) => {
@@ -378,7 +481,7 @@ export default function POS() {
       setSelectedDisplay(null);
       return;
     }
-    const firstMatch = selectedDisplayGroup.options.find((option) => option.materialId === materialId) ?? null;
+    const firstMatch = selectedDisplayGroup.options.find((option) => normalizeDisplayMaterialValue(option.materialId) === materialId) ?? null;
     setSelectedDisplayFinishingId(firstMatch?.finishingId ?? "");
     setSelectedDisplay(firstMatch);
   };
@@ -391,7 +494,7 @@ export default function POS() {
     }
     const match =
       selectedDisplayGroup.options.find(
-        (option) => option.materialId === selectedDisplayMaterialId && option.finishingId === finishingId,
+        (option) => normalizeDisplayMaterialValue(option.materialId) === selectedDisplayMaterialId && option.finishingId === finishingId,
       ) ?? null;
     setSelectedDisplay(match);
   };
@@ -402,12 +505,15 @@ export default function POS() {
     setPaymentOpen(true);
   };
 
+  const selectedProductUnitName =
+    selectedProductVariant?.unit?.name ?? selectedProductMaterialOption?.baseVariant?.unit?.name ?? selectedProduct?.unit?.name;
+  const productAreaMode = Boolean(selectedProduct?.hasCustomSize) && isAreaUnitName(selectedProductUnitName);
   const dialogType: TransactionItemType | null = selectedProduct ? "produk" : selectedServiceGroup ? "jasa" : selectedDisplayGroup ? "display" : null;
   const dialogAreaMode =
-    dialogType === "produk" ? Boolean(selectedProduct?.hasCustomSize) : dialogType === "jasa" ? isAreaUnitName(selectedService?.unit?.name) : dialogType === "display" ? isAreaUnitName(selectedDisplay?.unit?.name) : false;
+    dialogType === "produk" ? productAreaMode : dialogType === "jasa" ? isAreaUnitName(selectedService?.unit?.name) : dialogType === "display" ? isAreaUnitName(selectedDisplay?.unit?.name) : false;
   const dialogPrice =
     dialogType === "produk"
-      ? selectedProduct?.materialVariants.find((material) => material.id === itemMaterial)?.sellingPrice ?? selectedProduct?.materialVariants[0]?.sellingPrice ?? 0
+      ? selectedProductVariant?.sellingPrice ?? 0
       : dialogType === "jasa"
         ? selectedService?.sellingPrice ?? 0
         : dialogType === "display"
@@ -415,22 +521,34 @@ export default function POS() {
           : 0;
   const dialogEstimate =
     dialogType === "produk" && selectedProduct
-      ? calculateProductSubtotal(selectedProduct, dialogPrice, itemQty, itemWidth, itemHeight, itemFinishing)
+      ? calculateProductSubtotal(dialogPrice, itemQty, productAreaMode, itemWidth, itemHeight)
       : calculateGenericSubtotal(dialogPrice, itemQty, Boolean(dialogAreaMode), itemWidth, itemHeight);
 
   const addToCart = () => {
     if (selectedProduct) {
-      if (selectedProduct.materialVariants.length === 0) {
+      if (productMaterialOptions.length === 0) {
         toast.error("Produk tidak memiliki varian bahan aktif");
         return;
       }
-      const material = selectedProduct.materialVariants.find((m) => m.id === itemMaterial) ?? selectedProduct.materialVariants[0];
+      if (productFinishingOptions.length === 0) {
+        toast.error("Finishing untuk bahan ini tidak tersedia");
+        return;
+      }
+      if (selectedProductFinishingId === PRODUCT_FINISHING_UNSELECTED) {
+        toast.error("Pilih finishing terlebih dahulu");
+        return;
+      }
+      const material = selectedProductVariant;
       if (!material) {
-        toast.error("Varian bahan tidak ditemukan");
+        toast.error("Kombinasi bahan dan finishing tidak ditemukan");
+        return;
+      }
+      if (productAreaMode && (!itemWidth || !itemHeight)) {
+        toast.error("Panjang dan lebar wajib diisi");
         return;
       }
       const price = material.sellingPrice;
-      const subtotal = calculateProductSubtotal(selectedProduct, price, itemQty, itemWidth, itemHeight, itemFinishing);
+      const subtotal = calculateProductSubtotal(price, itemQty, productAreaMode, itemWidth, itemHeight);
       setCart((prev) => [
         ...prev,
         {
@@ -439,10 +557,10 @@ export default function POS() {
           product: selectedProduct,
           selectedMaterial: material,
           quantity: itemQty,
-          width: selectedProduct.hasCustomSize ? itemWidth : undefined,
-          height: selectedProduct.hasCustomSize ? itemHeight : undefined,
+          width: productAreaMode ? itemWidth : undefined,
+          height: productAreaMode ? itemHeight : undefined,
           notes: itemNotes,
-          finishing: itemFinishing,
+          finishing: false,
           subtotal,
         },
       ]);
@@ -608,13 +726,19 @@ export default function POS() {
           {activeType === "produk" &&
             filteredProducts.map((product) => {
               const categoryIcon = sanitizeCategoryIcon(categories.find((category) => category.id === product.categoryId)?.icon);
+              const minPrice = Math.min(...product.materialVariants.map((variant) => variant.sellingPrice));
+              const variantUnitNames = [
+                ...new Set(product.materialVariants.map((variant) => variant.unit?.name?.trim()).filter((name): name is string => Boolean(name))),
+              ];
+              const productUnitLabel =
+                variantUnitNames.length === 1 ? unitSuffixFromName(variantUnitNames[0]) : variantUnitNames.length > 1 ? "/varian" : pricingUnitLabel(product.pricingUnit);
               return (
                 <button key={product.id} onClick={() => openAddProduct(product)} className="pos-product-card text-left">
                   {categoryIcon ? <div className="text-2xl mb-2">{categoryIcon}</div> : null}
                 <h4 className="font-semibold text-sm text-foreground leading-tight">{product.name}</h4>
                 <p className="text-primary font-bold text-sm mt-1">
-                  {formatCurrency(product.materialVariants[0]?.sellingPrice ?? 0)}
-                  <span className="text-muted-foreground font-normal text-xs">{pricingUnitLabel(product.pricingUnit)}</span>
+                  Mulai {formatCurrency(minPrice)}
+                  <span className="text-muted-foreground font-normal text-xs">{productUnitLabel}</span>
                 </p>
                 </button>
               );
@@ -767,7 +891,7 @@ export default function POS() {
                       <SelectContent>
                         {displayMaterialOptions.map((entry) => (
                           <SelectItem key={entry.id} value={entry.id}>
-                            {entry.material.name}
+                            {entry.label}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -791,23 +915,44 @@ export default function POS() {
                 </>
               ) : null}
 
-              {dialogType === "produk" && selectedProduct?.materialVariants.length ? (
-                <div>
-                  <label className="text-sm font-medium text-foreground mb-1.5 block">Bahan</label>
-                  <Select value={itemMaterial} onValueChange={setItemMaterial}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {selectedProduct.materialVariants.map((material) => (
-                        <SelectItem key={material.id} value={material.id}>
-                          {material.name} - {formatCurrency(material.sellingPrice)}
-                          {pricingUnitLabel(selectedProduct.pricingUnit)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+              {dialogType === "produk" && selectedProduct ? (
+                <>
+                  <div>
+                    <label className="text-sm font-medium text-foreground mb-1.5 block">Bahan</label>
+                    <Select value={itemMaterial} onValueChange={handleSelectProductMaterial}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Pilih bahan" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {productMaterialOptions.map((material) => (
+                          <SelectItem key={material.materialId} value={material.materialId}>
+                            {material.materialName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-foreground mb-1.5 block">Tambah Finishing</label>
+                    <Select
+                      value={selectedProductFinishingId === PRODUCT_FINISHING_UNSELECTED ? undefined : selectedProductFinishingId}
+                      onValueChange={setSelectedProductFinishingId}
+                      disabled={productFinishingOptions.length === 0}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Pilih finishing" />
+                      </SelectTrigger>
+                        <SelectContent>
+                          {productFinishingOptions.map((option) => (
+                          <SelectItem key={option.finishingValue} value={option.finishingValue}>
+                            {option.finishingName} - {formatCurrency(option.sellingPrice)}
+                            {unitSuffixFromName(option.unitName)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
               ) : null}
 
               <div>
@@ -833,13 +978,6 @@ export default function POS() {
                 </div>
               ) : null}
 
-
-              {dialogType === "produk" && selectedProduct && selectedProduct.finishingCost > 0 ? (
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={itemFinishing} onChange={(e) => setItemFinishing(e.target.checked)} className="rounded border-input" />
-                  <span className="text-sm text-foreground">Tambah finishing (+{formatCurrency(selectedProduct.finishingCost)})</span>
-                </label>
-              ) : null}
 
               <div>
                 <label className="text-sm font-medium text-foreground mb-1.5 block">Catatan</label>
@@ -949,7 +1087,3 @@ export default function POS() {
     </div>
   );
 }
-
-
-
-

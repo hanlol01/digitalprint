@@ -20,6 +20,7 @@ const variantSchema = z.object({
   unitId: z.string().uuid().optional(),
   finishingId: z.string().uuid().optional(),
   name: z.string().min(1),
+  sellingPrice: z.number().int().nonnegative().optional(),
   minimumOrder: z.number().int().positive().default(1),
   estimateText: z.string().max(100).optional().nullable(),
   recipes: z.array(recipeSchema).default([]),
@@ -174,6 +175,19 @@ productsRouter.post(
     const materialPriceMap = new Map(materials.map((material) => [material.id, material]));
 
     const created = await prisma.$transaction(async (tx) => {
+      const variantCodes = body.variants
+        .map((variant) => variant.code?.trim())
+        .filter((code): code is string => Boolean(code));
+      if (variantCodes.length > 0) {
+        await tx.productMaterialVariant.updateMany({
+          where: {
+            deletedAt: { not: null },
+            code: { in: variantCodes },
+          },
+          data: { code: null },
+        });
+      }
+
       const product = await tx.product.create({
         data: {
           code: body.code,
@@ -206,7 +220,7 @@ productsRouter.post(
               finishingId: variant.finishingId,
               name: variant.name,
               costPrice: materialPrice.costPrice,
-              sellingPrice: materialPrice.sellingPrice,
+              sellingPrice: variant.sellingPrice ?? materialPrice.sellingPrice,
               minimumOrder: variant.minimumOrder,
               estimateText: variant.estimateText ?? null,
             },
@@ -290,6 +304,19 @@ productsRouter.patch(
       });
 
       if (body.variants) {
+        const variantCodes = body.variants
+          .map((variant) => variant.code?.trim())
+          .filter((code): code is string => Boolean(code));
+        if (variantCodes.length > 0) {
+          await tx.productMaterialVariant.updateMany({
+            where: {
+              deletedAt: { not: null },
+              code: { in: variantCodes },
+            },
+            data: { code: null },
+          });
+        }
+
         const existingVariantIds = existing.variants.map((variant) => variant.id);
         if (existingVariantIds.length > 0) {
           await tx.variantMaterialRecipe.deleteMany({
@@ -297,7 +324,7 @@ productsRouter.patch(
           });
           await tx.productMaterialVariant.updateMany({
             where: { id: { in: existingVariantIds } },
-            data: { deletedAt: new Date(), isActive: false },
+            data: { code: null, deletedAt: new Date(), isActive: false },
           });
         }
 
@@ -316,7 +343,7 @@ productsRouter.patch(
               finishingId: variant.finishingId,
               name: variant.name,
               costPrice: materialPrice.costPrice,
-              sellingPrice: materialPrice.sellingPrice,
+              sellingPrice: variant.sellingPrice ?? materialPrice.sellingPrice,
               minimumOrder: variant.minimumOrder,
               estimateText: variant.estimateText ?? null,
             },
@@ -366,6 +393,7 @@ productsRouter.delete(
       await tx.productMaterialVariant.updateMany({
         where: { productId: id, deletedAt: null },
         data: {
+          code: null,
           deletedAt: new Date(),
           isActive: false,
         },

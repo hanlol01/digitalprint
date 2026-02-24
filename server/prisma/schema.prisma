@@ -302,7 +302,7 @@ model DisplayCatalog {
   categoryId   String    @map("kategori_produk_id")
   unitId       String    @map("satuan_id")
   frameId      String    @map("rangka_id")
-  materialId   String    @map("bahan_id")
+  materialId   String?   @map("bahan_id")
   finishingId  String    @map("finishing_id")
   sellingPrice Int       @map("harga_jual")
   minimumOrder Int       @default(1) @map("minimum_order")
@@ -316,7 +316,7 @@ model DisplayCatalog {
   category   ProductCategory @relation(fields: [categoryId], references: [id])
   unit       UnitMaster      @relation(fields: [unitId], references: [id])
   frame      FrameMaster     @relation(fields: [frameId], references: [id])
-  material   Material        @relation(fields: [materialId], references: [id])
+  material   Material?       @relation(fields: [materialId], references: [id])
   finishing  FinishingMaster @relation(fields: [finishingId], references: [id])
   orderItems OrderItem[]
 

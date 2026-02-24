@@ -13,7 +13,6 @@ const createMaterialSchema = z.object({
   name: z.string().min(1),
   unit: z.string().min(1),
   costPrice: z.number().int().nonnegative().default(0),
-  sellingPrice: z.number().int().nonnegative().default(0),
   currentStock: z.number().nonnegative().default(0),
   minStock: z.number().nonnegative().default(0),
   lastRestocked: z.string().datetime().optional(),
@@ -24,7 +23,6 @@ const updateMaterialSchema = z.object({
   name: z.string().min(1).optional(),
   unit: z.string().min(1).optional(),
   costPrice: z.number().int().nonnegative().optional(),
-  sellingPrice: z.number().int().nonnegative().optional(),
   minStock: z.number().nonnegative().optional(),
   lastRestocked: z.string().datetime().optional(),
   isActive: z.boolean().optional(),
@@ -99,7 +97,6 @@ materialsRouter.post(
         name: body.name,
         unit: body.unit,
         costPrice: body.costPrice,
-        sellingPrice: body.sellingPrice,
         currentStock: body.currentStock,
         minStock: body.minStock,
         lastRestocked: body.lastRestocked ? new Date(body.lastRestocked) : new Date(),
@@ -131,19 +128,17 @@ materialsRouter.patch(
           name: body.name,
           unit: body.unit,
           costPrice: body.costPrice,
-          sellingPrice: body.sellingPrice,
           minStock: body.minStock,
           lastRestocked: body.lastRestocked ? new Date(body.lastRestocked) : undefined,
           isActive: body.isActive,
         },
       });
 
-      if (body.costPrice !== undefined || body.sellingPrice !== undefined) {
+      if (body.costPrice !== undefined) {
         await tx.productMaterialVariant.updateMany({
           where: { materialId: id, deletedAt: null, isActive: true },
           data: {
             ...(body.costPrice !== undefined ? { costPrice: body.costPrice } : {}),
-            ...(body.sellingPrice !== undefined ? { sellingPrice: body.sellingPrice } : {}),
           },
         });
       }

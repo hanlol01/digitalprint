@@ -244,6 +244,7 @@ ordersRouter.post(
         },
         include: {
           product: true,
+          unit: true,
           recipes: true,
         },
       }),
@@ -332,9 +333,8 @@ ordersRouter.post(
 
         const unitPrice = variant.sellingPrice;
         const quantity = item.quantity ?? 1;
-        const requiresSize =
-          variant.product.pricingUnit === PricingUnit.per_meter ||
-          variant.product.pricingUnit === PricingUnit.per_cm;
+        const unitName = variant.unit?.name ?? null;
+        const requiresSize = variant.product.hasCustomSize && isAreaUnitName(unitName);
 
         if (requiresSize && (!item.width || !item.height)) {
           throw new ApiError(400, `Produk "${variant.product.name}" membutuhkan panjang dan lebar`);
@@ -364,10 +364,10 @@ ordersRouter.post(
           displayId: null,
           referenceCode: variant.code ?? null,
           itemLabel: variant.name,
-          unitLabel: variant.unitId ? null : null,
+          unitLabel: unitName,
           productName: variant.product.name,
           variantName: variant.name,
-          pricingUnit: variant.product.pricingUnit,
+          pricingUnit: unitName ? pricingUnitFromUnitName(unitName) : variant.product.pricingUnit,
           unitPrice,
           quantity,
           width: item.width ?? null,

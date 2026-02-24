@@ -21,13 +21,14 @@ const emptyForm: DisplayPayload = {
   categoryId: "",
   unitId: "",
   frameId: "",
-  materialId: "",
+  materialId: null,
   finishingId: "",
   sellingPrice: 0,
   minimumOrder: 1,
   estimateText: "",
   isActive: true,
 };
+const DISPLAY_MATERIAL_NONE = "__none__";
 
 const compareByCodeAsc = <T extends { code?: string | null }>(a: T, b: T): number => {
   const codeA = (a.code ?? "").trim();
@@ -73,7 +74,7 @@ export default function DisplaysPage() {
       productId: products[0]?.id ?? "",
       unitId: units[0]?.id ?? "",
       frameId: frames[0]?.id ?? "",
-      materialId: materials[0]?.id ?? "",
+      materialId: materials[0]?.id ?? null,
       finishingId: finishings[0]?.id ?? "",
     });
     setDialogOpen(true);
@@ -88,7 +89,7 @@ export default function DisplaysPage() {
       categoryId: display.categoryId,
       unitId: display.unitId,
       frameId: display.frameId,
-      materialId: display.materialId,
+      materialId: display.materialId ?? null,
       finishingId: display.finishingId,
       sellingPrice: display.sellingPrice,
       minimumOrder: display.minimumOrder,
@@ -101,7 +102,7 @@ export default function DisplaysPage() {
   const handleSave = async () => {
     if (!form.code.trim()) return toast.error("Kode display wajib diisi");
     if (!form.name.trim()) return toast.error("Nama display wajib diisi");
-    if (!form.productId || !form.categoryId || !form.unitId || !form.frameId || !form.materialId || !form.finishingId) {
+    if (!form.productId || !form.categoryId || !form.unitId || !form.frameId || !form.finishingId) {
       return toast.error("Lengkapi semua relasi display");
     }
     try {
@@ -172,7 +173,7 @@ export default function DisplaysPage() {
                 </div>
               </div>
               <p className="text-sm text-muted-foreground">
-                {display.frame?.name} | {display.material?.name} | {display.finishing?.name}
+                {display.frame?.name ?? "-"} | {display.material?.name ?? "Tanpa Bahan"} | {display.finishing?.name ?? "-"}
               </p>
               <p className="text-xs text-muted-foreground">
                 Min order: {display.minimumOrder} | {display.unit?.name}
@@ -263,11 +264,15 @@ export default function DisplaysPage() {
               </div>
               <div className="space-y-2">
                 <Label>Bahan</Label>
-                <Select value={form.materialId} onValueChange={(value) => setForm((prev) => ({ ...prev, materialId: value }))}>
+                <Select
+                  value={form.materialId ?? DISPLAY_MATERIAL_NONE}
+                  onValueChange={(value) => setForm((prev) => ({ ...prev, materialId: value === DISPLAY_MATERIAL_NONE ? null : value }))}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value={DISPLAY_MATERIAL_NONE}>Tanpa Bahan</SelectItem>
                     {materials.map((material) => (
                       <SelectItem key={material.id} value={material.id}>
                         {material.name}

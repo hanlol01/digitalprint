@@ -31,9 +31,24 @@ export const errorHandler = (error: unknown, _req: Request, res: Response, _next
 
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === "P2002") {
+      const targetFields = Array.isArray(error.meta?.target) ? (error.meta?.target as string[]) : [];
+      const fieldLabelMap: Record<string, string> = {
+        kode_produk: "kode produk",
+        nomor_legacy: "ID produk (legacy)",
+        kode_varian: "kode varian",
+        kode_jasa: "kode jasa",
+        kode_display: "kode display",
+        kode_bahan: "kode bahan",
+      };
+      const readableFields = targetFields
+        .map((field) => fieldLabelMap[field] ?? field.replace(/_/g, " "))
+        .filter(Boolean);
+      const duplicateMessage = readableFields.length > 0
+        ? `Data duplikat, nilai unik sudah digunakan pada ${readableFields.join(", ")}`
+        : "Data duplikat, nilai unik sudah digunakan";
       res.status(409).json({
         success: false,
-        message: "Data duplikat, nilai unik sudah digunakan",
+        message: duplicateMessage,
         errors: error.meta,
       });
       return;

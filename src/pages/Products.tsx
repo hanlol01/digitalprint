@@ -37,6 +37,49 @@ const sanitizeCategoryIcon = (icon?: string | null): string | null => {
   return value.toLowerCase() === "box" ? null : value;
 };
 
+const buildVariantName = (materialName: string, finishingName?: string | null): string => {
+  const name = materialName.trim();
+  if (!finishingName?.trim()) return name;
+  return `${name} - ${finishingName.trim()}`;
+};
+
+const getVariantMaterialName = (variant: MaterialVariant): string => {
+  if (variant.material?.name?.trim()) return variant.material.name.trim();
+  const [first] = variant.name.split(" - ");
+  return first?.trim() || variant.name.trim();
+};
+
+const slugCodePart = (value?: string | null, fallback = "x"): string => {
+  const normalized = (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || fallback;
+};
+
+const buildVariantCodeSeed = (productCode?: string | null, materialCode?: string | null, finishingCode?: string | null): string => {
+  return [
+    slugCodePart(productCode, "prd"),
+    slugCodePart(materialCode, "mat"),
+    finishingCode ? slugCodePart(finishingCode, "fin") : "base",
+  ].join("-");
+};
+
+const ensureUniqueVariantCode = (seed: string, existingVariants: MaterialVariant[], ignoreVariantId?: string): string => {
+  const usedCodes = new Set(
+    existingVariants
+      .filter((variant) => variant.id !== ignoreVariantId)
+      .map((variant) => (variant.code ?? "").trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const base = slugCodePart(seed, "var");
+  if (!usedCodes.has(base)) return base;
+  let idx = 2;
+  while (usedCodes.has(`${base}-${idx}`)) idx += 1;
+  return `${base}-${idx}`;
+};
+
 const compareByCodeAsc = <T extends { code?: string | null; name?: string }>(a: T, b: T): number => {
   const codeA = (a.code ?? "").trim();
   const codeB = (b.code ?? "").trim();
@@ -77,6 +120,8 @@ export default function Products() {
 
   const [materialSearchOpen, setMaterialSearchOpen] = useState(false);
   const [newVariantMaterialId, setNewVariantMaterialId] = useState("");
+  const [newFinishingMaterialId, setNewFinishingMaterialId] = useState("");
+  const [newVariantFinishingId, setNewVariantFinishingId] = useState("");
 
   const { data: categories = [] } = useCategories({ activeOnly: true });
   const { data: materials = [] } = useMaterials();
@@ -106,9 +151,23 @@ export default function Products() {
   }, [products, selectedCat, search]);
 
   const selectedMaterialForVariant = materials.find((material) => material.id === newVariantMaterialId);
+  const selectedFinishingForVariant = finishings.find((finishing) => finishing.id === newVariantFinishingId);
+
+  const variantMaterialOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    form.materialVariants.forEach((variant) => {
+      const label = getVariantMaterialName(variant);
+      if (!map.has(variant.materialId)) map.set(variant.materialId, label);
+    });
+    return [...map.entries()]
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, "id", { sensitivity: "base" }));
+  }, [form.materialVariants]);
 
   const resetVariantInput = () => {
     setNewVariantMaterialId("");
+    setNewFinishingMaterialId("");
+    setNewVariantFinishingId("");
   };
 
   const openCreate = () => {
@@ -138,6 +197,7 @@ export default function Products() {
       isActive: product.isActive ?? true,
     });
     resetVariantInput();
+    setNewFinishingMaterialId(product.materialVariants[0]?.materialId ?? "");
     setDialogOpen(true);
   };
 
@@ -147,19 +207,26 @@ export default function Products() {
       return;
     }
 
-    const alreadyExists = form.materialVariants.some((variant) => variant.materialId === selectedMaterialForVariant.id);
+    const alreadyExists = form.materialVariants.some(
+      (variant) => variant.materialId === selectedMaterialForVariant.id && !variant.finishingId,
+    );
     if (alreadyExists) {
-      toast.error("Bahan ini sudah ada di daftar varian");
+      toast.error("Varian bahan dasar ini sudah ada");
       return;
     }
 
+    const generatedCode = ensureUniqueVariantCode(
+      buildVariantCodeSeed(form.code, selectedMaterialForVariant.code ?? selectedMaterialForVariant.name, null),
+      form.materialVariants,
+    );
+
     const variant: MaterialVariant = {
       id: crypto.randomUUID(),
-      code: "",
+      code: generatedCode,
       materialId: selectedMaterialForVariant.id,
       unitId: form.unitId ?? undefined,
       finishingId: undefined,
-      name: selectedMaterialForVariant.name,
+      name: buildVariantName(selectedMaterialForVariant.name),
       costPrice: selectedMaterialForVariant.costPrice ?? 0,
       sellingPrice: selectedMaterialForVariant.sellingPrice ?? 0,
       pricePerUnit: selectedMaterialForVariant.sellingPrice ?? 0,
@@ -170,7 +237,68 @@ export default function Products() {
     };
 
     setForm((prev) => ({ ...prev, materialVariants: [...prev.materialVariants, variant] }));
-    resetVariantInput();
+    setNewVariantMaterialId("");
+    setNewFinishingMaterialId(selectedMaterialForVariant.id);
+    setNewVariantFinishingId("");
+  };
+
+  const addVariantFinishing = () => {
+    if (!newFinishingMaterialId) {
+      toast.error("Pilih bahan untuk finishing");
+      return;
+    }
+    if (!selectedFinishingForVariant) {
+      toast.error("Pilih finishing terlebih dahulu");
+      return;
+    }
+
+    const duplicate = form.materialVariants.some(
+      (variant) =>
+        variant.materialId === newFinishingMaterialId &&
+        (variant.finishingId ?? null) === selectedFinishingForVariant.id,
+    );
+    if (duplicate) {
+      toast.error("Varian finishing ini sudah ada pada bahan yang dipilih");
+      return;
+    }
+
+    const baseVariant =
+      form.materialVariants.find((variant) => variant.materialId === newFinishingMaterialId && !variant.finishingId) ??
+      form.materialVariants.find((variant) => variant.materialId === newFinishingMaterialId);
+    if (!baseVariant) {
+      toast.error("Bahan belum tersedia pada daftar varian");
+      return;
+    }
+
+    const materialName = getVariantMaterialName(baseVariant);
+    const materialCodeRef =
+      baseVariant.material?.code ??
+      materials.find((material) => material.id === newFinishingMaterialId)?.code ??
+      materialName;
+    const generatedCode = ensureUniqueVariantCode(
+      buildVariantCodeSeed(
+        form.code,
+        materialCodeRef,
+        selectedFinishingForVariant.code ?? selectedFinishingForVariant.name,
+      ),
+      form.materialVariants,
+    );
+    const newVariant: MaterialVariant = {
+      ...baseVariant,
+      id: crypto.randomUUID(),
+      code: generatedCode,
+      finishingId: selectedFinishingForVariant.id,
+      finishing: selectedFinishingForVariant,
+      name: buildVariantName(materialName, selectedFinishingForVariant.name),
+      recipes: (baseVariant.recipes ?? []).map((recipe) => ({
+        ...recipe,
+        id: crypto.randomUUID(),
+        variantId: "",
+      })),
+    };
+
+    setForm((prev) => ({ ...prev, materialVariants: [...prev.materialVariants, newVariant] }));
+    setNewVariantFinishingId("");
   };
 
   const removeVariant = (id: string) => {
@@ -209,6 +337,19 @@ export default function Products() {
       toast.error("Kode varian wajib diisi untuk semua varian");
       return;
     }
+    if (form.materialVariants.some((variant) => !Number.isFinite(variant.sellingPrice) || variant.sellingPrice < 0)) {
+      toast.error("Harga jual varian tidak valid");
+      return;
+    }
+    const variantKeySet = new Set<string>();
+    for (const variant of form.materialVariants) {
+      const key = `${variant.materialId}:${variant.finishingId ?? "none"}`;
+      if (variantKeySet.has(key)) {
+        toast.error("Terdapat kombinasi bahan + finishing yang duplikat");
+        return;
+      }
+      variantKeySet.add(key);
+    }
 
     const payload = {
       code: form.code.trim(),
@@ -229,6 +370,7 @@ export default function Products() {
         unitId: variant.unitId ?? undefined,
         finishingId: variant.finishingId ?? undefined,
         name: variant.name,
+        sellingPrice: Math.max(Number(variant.sellingPrice) || 0, 0),
         minimumOrder: variant.minimumOrder ?? 1,
         estimateText: variant.estimateText ?? null,
         recipes: (variant.recipes ?? []).map((recipe) => ({
@@ -521,15 +663,20 @@ export default function Products() {
               )}
             </div>
 
-            <div className="space-y-2">
-              <Label>Varian Bahan</Label>
-              <p className="text-xs text-muted-foreground">Harga modal dan harga jual mengikuti master bahan pada halaman Stok Bahan.</p>
+            <div className="space-y-3">
+              <Label>Varian Produk</Label>
+              <p className="text-xs text-muted-foreground">
+                Tambahkan bahan dasar terlebih dahulu, lalu gunakan opsi tambah finishing untuk membuat kombinasi varian.
+              </p>
               <div className="space-y-1.5">
                 {form.materialVariants.map((variant) => (
                   <div key={variant.id} className="space-y-3 text-sm bg-muted/30 rounded px-3 py-3">
                     <div className="flex items-start justify-between gap-2">
                       <div>
-                        <p className="text-foreground font-medium">{variant.name}</p>
+                        <p className="text-foreground font-medium">{getVariantMaterialName(variant)}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Finishing: {variant.finishing?.name ?? "-"}
+                        </p>
                         <p className="text-xs text-muted-foreground">
                           Modal: {formatCurrency(variant.costPrice)} | Jual: {formatCurrency(variant.sellingPrice)}
                         </p>
@@ -539,7 +686,7 @@ export default function Products() {
                       </Button>
                     </div>
 
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                       <div className="space-y-1">
                         <Label className="text-xs">Kode Varian</Label>
                         <Input
@@ -576,10 +723,25 @@ export default function Products() {
                         <Select
                           value={variant.finishingId ?? "none"}
                           onValueChange={(value) =>
-                            updateVariant(variant.id, (current) => ({
-                              ...current,
-                              finishingId: value === "none" ? null : value,
-                            }))
+                            updateVariant(variant.id, (current) => {
+                              const selectedFinishing = value === "none" ? null : finishings.find((item) => item.id === value) ?? null;
+                              const nextCode = ensureUniqueVariantCode(
+                                buildVariantCodeSeed(
+                                  form.code,
+                                  current.material?.code ?? getVariantMaterialName(current),
+                                  selectedFinishing?.code ?? selectedFinishing?.name ?? null,
+                                ),
+                                form.materialVariants,
+                                current.id,
+                              );
+                              return {
+                                ...current,
+                                code: nextCode,
+                                finishingId: selectedFinishing?.id ?? null,
+                                finishing: selectedFinishing,
+                                name: buildVariantName(getVariantMaterialName(current), selectedFinishing?.name),
+                              };
+                            })
                           }
                         >
                           <SelectTrigger>
@@ -593,7 +755,21 @@ export default function Products() {
                               </SelectItem>
                             ))}
                           </SelectContent>
-                        </Select>
+                          </Select>
+                        </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Harga Jual</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={variant.sellingPrice}
+                          onChange={(e) =>
+                            updateVariant(variant.id, (current) => ({
+                              ...current,
+                              sellingPrice: Math.max(Number(e.target.value) || 0, 0),
+                            }))
+                          }
+                        />
                       </div>
                       <div className="space-y-1">
                         <Label className="text-xs">Min Order</Label>
@@ -622,7 +798,7 @@ export default function Products() {
                   </div>
                 ))}
               </div>
-              <div className="grid grid-cols-[1fr_110px] gap-2">
+              <div className="grid grid-cols-[1fr_130px] gap-2">
                 <Popover open={materialSearchOpen} onOpenChange={setMaterialSearchOpen}>
                   <PopoverTrigger asChild>
                     <Button variant="outline" role="combobox" className="justify-between font-normal">
@@ -665,7 +841,36 @@ export default function Products() {
                   </PopoverContent>
                 </Popover>
                 <Button variant="outline" onClick={addVariant} className="shrink-0">
-                  Tambah
+                  Tambah Bahan
+                </Button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_140px] gap-2">
+                <Select value={newFinishingMaterialId} onValueChange={setNewFinishingMaterialId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Pilih bahan varian..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {variantMaterialOptions.map((option) => (
+                      <SelectItem key={option.id} value={option.id}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={newVariantFinishingId} onValueChange={setNewVariantFinishingId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Pilih finishing..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {finishings.map((finishing) => (
+                      <SelectItem key={finishing.id} value={finishing.id}>
+                        {finishing.code} - {finishing.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" onClick={addVariantFinishing} className="shrink-0">
+                  Tambah Finishing
                 </Button>
               </div>
             </div>

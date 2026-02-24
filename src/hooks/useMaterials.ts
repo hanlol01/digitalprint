@@ -4,6 +4,25 @@ import type { MaterialStock } from "@/types";
 
 const queryKey = ["materials"] as const;
 
+export interface CreateMaterialPayload {
+  name: string;
+  unit: string;
+  costPrice: number;
+  currentStock: number;
+  minStock: number;
+  lastRestocked?: string;
+  isActive?: boolean;
+}
+
+export interface UpdateMaterialPayload {
+  name?: string;
+  unit?: string;
+  costPrice?: number;
+  minStock?: number;
+  lastRestocked?: string;
+  isActive?: boolean;
+}
+
 export const useMaterials = (params?: { search?: string; lowStock?: boolean }) => {
   return useQuery({
     queryKey: [...queryKey, params?.search, params?.lowStock] as const,
@@ -20,7 +39,7 @@ export const useMaterials = (params?: { search?: string; lowStock?: boolean }) =
 export const useCreateMaterial = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: Omit<MaterialStock, "id">) => postData<MaterialStock, Omit<MaterialStock, "id">>("/bahan", payload),
+    mutationFn: (payload: CreateMaterialPayload) => postData<MaterialStock, CreateMaterialPayload>("/bahan", payload),
     onSuccess: () => queryClient.invalidateQueries({ queryKey }),
   });
 };
@@ -28,8 +47,8 @@ export const useCreateMaterial = () => {
 export const useUpdateMaterial = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...payload }: Partial<MaterialStock> & { id: string }) =>
-      patchData<MaterialStock, Partial<MaterialStock>>(`/bahan/${id}`, payload),
+    mutationFn: ({ id, ...payload }: UpdateMaterialPayload & { id: string }) =>
+      patchData<MaterialStock, UpdateMaterialPayload>(`/bahan/${id}`, payload),
     onSuccess: () => queryClient.invalidateQueries({ queryKey }),
   });
 };

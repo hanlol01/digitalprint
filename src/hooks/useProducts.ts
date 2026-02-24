@@ -157,6 +157,7 @@ export type ProductPayload = {
     unitId?: string;
     finishingId?: string;
     name: string;
+    sellingPrice?: number;
     minimumOrder?: number;
     estimateText?: string | null;
     recipes?: Array<{
