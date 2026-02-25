@@ -111,6 +111,7 @@ const unitSuffixFromName = (value?: string | null): string => {
   return unitName ? `/${unitName}` : "";
 };
 const normalizeDisplayMaterialValue = (materialId?: string | null): string => materialId ?? DISPLAY_MATERIAL_NONE;
+const normalizeMinimumOrder = (value?: number | null): number => Math.max(Number(value) || 1, 1);
 
 const compareByCodeThenName = (a: { code?: string | null; name: string }, b: { code?: string | null; name: string }): number => {
   const codeA = (a.code ?? "").trim();
@@ -395,7 +396,10 @@ export default function POS() {
   };
 
   const openAddProduct = (product: Product) => {
-    const initialMaterialId = buildProductMaterialOptions(product)[0]?.materialId ?? "";
+    const materialOptions = buildProductMaterialOptions(product);
+    const initialMaterialOption = materialOptions[0] ?? null;
+    const initialMaterialId = initialMaterialOption?.materialId ?? "";
+    const initialQty = normalizeMinimumOrder(initialMaterialOption?.baseVariant?.minimumOrder);
     setSelectedProduct(product);
     setSelectedServiceGroup(null);
     setSelectedService(null);
@@ -407,7 +411,7 @@ export default function POS() {
     setSelectedDisplay(null);
     setItemMaterial(initialMaterialId);
     setSelectedProductFinishingId(PRODUCT_FINISHING_UNSELECTED);
-    setItemQty(1);
+    setItemQty(initialQty);
     setItemWidth(1);
     setItemHeight(1);
     setItemNotes("");
@@ -447,6 +451,24 @@ export default function POS() {
   const handleSelectProductMaterial = (materialId: string) => {
     setItemMaterial(materialId);
     setSelectedProductFinishingId(PRODUCT_FINISHING_UNSELECTED);
+    const materialOption = productMaterialOptions.find((option) => option.materialId === materialId) ?? null;
+    setItemQty(normalizeMinimumOrder(materialOption?.baseVariant?.minimumOrder));
+  };
+
+  const handleSelectProductFinishing = (finishingValue: string) => {
+    setSelectedProductFinishingId(finishingValue);
+    if (!selectedProduct || !selectedProductMaterialOption) {
+      setItemQty(1);
+      return;
+    }
+    const selectedFinishingId = finishingValue === PRODUCT_FINISHING_NONE ? null : finishingValue;
+    const matchedVariant =
+      selectedProduct.materialVariants.find(
+        (variant) =>
+          variant.materialId === selectedProductMaterialOption.materialId &&
+          (variant.finishingId ?? null) === selectedFinishingId,
+      ) ?? null;
+    setItemQty(normalizeMinimumOrder(matchedVariant?.minimumOrder ?? selectedProductMaterialOption.baseVariant?.minimumOrder));
   };
 
   const handleSelectServiceMaterial = (materialId: string) => {
@@ -523,6 +545,12 @@ export default function POS() {
     dialogType === "produk" && selectedProduct
       ? calculateProductSubtotal(dialogPrice, itemQty, productAreaMode, itemWidth, itemHeight)
       : calculateGenericSubtotal(dialogPrice, itemQty, Boolean(dialogAreaMode), itemWidth, itemHeight);
+  const dialogMinimumOrder =
+    dialogType === "produk"
+      ? normalizeMinimumOrder(selectedProductVariant?.minimumOrder ?? selectedProductMaterialOption?.baseVariant?.minimumOrder)
+      : dialogType === "display"
+        ? normalizeMinimumOrder(selectedDisplay?.minimumOrder)
+        : 1;
 
   const addToCart = () => {
     if (selectedProduct) {
@@ -545,6 +573,11 @@ export default function POS() {
       }
       if (productAreaMode && (!itemWidth || !itemHeight)) {
         toast.error("Panjang dan lebar wajib diisi");
+        return;
+      }
+      const minOrder = normalizeMinimumOrder(material.minimumOrder);
+      if (itemQty < minOrder) {
+        toast.error(`Minimal order ${minOrder}`);
         return;
       }
       const price = material.sellingPrice;
@@ -936,7 +969,7 @@ export default function POS() {
                     <label className="text-sm font-medium text-foreground mb-1.5 block">Tambah Finishing</label>
                     <Select
                       value={selectedProductFinishingId === PRODUCT_FINISHING_UNSELECTED ? undefined : selectedProductFinishingId}
-                      onValueChange={setSelectedProductFinishingId}
+                      onValueChange={handleSelectProductFinishing}
                       disabled={productFinishingOptions.length === 0}
                     >
                       <SelectTrigger>
@@ -959,9 +992,9 @@ export default function POS() {
                 <label className="text-sm font-medium text-foreground mb-1.5 block">Jumlah</label>
                 <Input
                   type="number"
-                  min={dialogType === "display" ? Math.max(selectedDisplay?.minimumOrder ?? 1, 1) : 1}
+                  min={dialogMinimumOrder}
                   value={itemQty}
-                  onChange={(e) => setItemQty(Number(e.target.value))}
+                  onChange={(e) => setItemQty(Math.max(Number(e.target.value) || 0, dialogMinimumOrder))}
                 />
               </div>
 

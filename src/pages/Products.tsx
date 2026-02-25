@@ -333,16 +333,27 @@ export default function Products() {
       toast.error("Panjang dan lebar custom wajib diisi");
       return;
     }
-    if (form.materialVariants.some((variant) => !variant.code?.trim())) {
-      toast.error("Kode varian wajib diisi untuk semua varian");
-      return;
-    }
-    if (form.materialVariants.some((variant) => !Number.isFinite(variant.sellingPrice) || variant.sellingPrice < 0)) {
+    const normalizedVariants = form.materialVariants.map((variant) => ({
+      ...variant,
+      code:
+        variant.code?.trim() ||
+        ensureUniqueVariantCode(
+          buildVariantCodeSeed(
+            form.code,
+            variant.material?.code ?? getVariantMaterialName(variant),
+            variant.finishing?.code ?? variant.finishing?.name ?? null,
+          ),
+          form.materialVariants,
+          variant.id,
+        ),
+    }));
+
+    if (normalizedVariants.some((variant) => !Number.isFinite(variant.sellingPrice) || variant.sellingPrice < 0)) {
       toast.error("Harga jual varian tidak valid");
       return;
     }
     const variantKeySet = new Set<string>();
-    for (const variant of form.materialVariants) {
+    for (const variant of normalizedVariants) {
       const key = `${variant.materialId}:${variant.finishingId ?? "none"}`;
       if (variantKeySet.has(key)) {
         toast.error("Terdapat kombinasi bahan + finishing yang duplikat");
@@ -364,7 +375,7 @@ export default function Products() {
       finishingCost: form.finishingCost,
       estimatedMinutes: form.estimatedMinutes,
       isActive: form.isActive ?? true,
-      variants: form.materialVariants.map((variant) => ({
+      variants: normalizedVariants.map((variant) => ({
         code: variant.code?.trim(),
         materialId: variant.materialId,
         unitId: variant.unitId ?? undefined,
@@ -686,14 +697,7 @@ export default function Products() {
                       </Button>
                     </div>
 
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                      <div className="space-y-1">
-                        <Label className="text-xs">Kode Varian</Label>
-                        <Input
-                          value={variant.code ?? ""}
-                          onChange={(e) => updateVariant(variant.id, (current) => ({ ...current, code: e.target.value }))}
-                        />
-                      </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                       <div className="space-y-1">
                         <Label className="text-xs">Satuan Varian</Label>
                         <Select
@@ -712,7 +716,7 @@ export default function Products() {
                             <SelectItem value="default">Ikuti Produk</SelectItem>
                             {units.map((unit) => (
                               <SelectItem key={unit.id} value={unit.id}>
-                                {unit.code}
+                                {unit.name ?? unit.code}
                               </SelectItem>
                             ))}
                           </SelectContent>
