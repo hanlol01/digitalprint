@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Edit, Plus, Search, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -28,7 +28,8 @@ const emptyForm: DisplayPayload = {
   estimateText: "",
   isActive: true,
 };
-const DISPLAY_MATERIAL_NONE = "__none__";
+
+const normalizeText = (value?: string | null): string => (value ?? "").trim().toLowerCase();
 
 const compareByCodeAsc = <T extends { code?: string | null }>(a: T, b: T): number => {
   const codeA = (a.code ?? "").trim();
@@ -39,6 +40,32 @@ const compareByCodeAsc = <T extends { code?: string | null }>(a: T, b: T): numbe
   return 0;
 };
 
+const compareByCodeThenName = <T extends { code?: string | null; name: string }>(a: T, b: T): number => {
+  const byCode = compareByCodeAsc(a, b);
+  if (byCode !== 0) return byCode;
+  return a.name.localeCompare(b.name, "id", { sensitivity: "base" });
+};
+
+const parseCurrencyInput = (value: string): number => {
+  const digits = value.replace(/\D/g, "");
+  return digits ? Number(digits) : 0;
+};
+
+const formatCurrencyInput = (value: number): string => {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  return `Rp ${Math.round(value).toLocaleString("id-ID")}`;
+};
+
+const generateNextDisplayCode = (displays: DisplayCatalog[]): string => {
+  const maxIndex = displays.reduce((max, item) => {
+    const match = (item.code ?? "").trim().toLowerCase().match(/^dsp-(\d+)$/);
+    if (!match) return max;
+    const parsed = Number(match[1]);
+    return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+  }, 0);
+  return `dsp-${String(Math.max(maxIndex + 1, 1)).padStart(3, "0")}`;
+};
+
 export default function DisplaysPage() {
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -46,8 +73,10 @@ export default function DisplaysPage() {
   const [editing, setEditing] = useState<DisplayCatalog | null>(null);
   const [deleting, setDeleting] = useState<DisplayCatalog | null>(null);
   const [form, setForm] = useState<DisplayPayload>(emptyForm);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
 
   const { data: displays = [], isLoading } = useDisplays({ search });
+  const { data: displayCodeSource = [] } = useDisplays();
   const { data: categories = [] } = useCategories({ activeOnly: true });
   const { data: products = [] } = useProducts({ activeOnly: true });
   const { data: units = [] } = useUnits({ activeOnly: true });
@@ -59,23 +88,70 @@ export default function DisplaysPage() {
   const updateDisplay = useUpdateDisplay();
   const deleteDisplay = useDeleteDisplay();
 
-  const filteredProducts = useMemo(() => {
-    if (!form.categoryId) return products;
-    return products.filter((item) => item.categoryId === form.categoryId);
-  }, [products, form.categoryId]);
-
   const sortedDisplays = useMemo(() => [...displays].sort(compareByCodeAsc), [displays]);
+  const sortedUnits = useMemo(() => [...units].sort(compareByCodeThenName), [units]);
+  const sortedFrames = useMemo(() => [...frames].sort(compareByCodeThenName), [frames]);
+  const sortedMaterials = useMemo(
+    () => [...materials].sort((a, b) => compareByCodeThenName({ code: a.code, name: a.name }, { code: b.code, name: b.name })),
+    [materials],
+  );
+  const sortedFinishings = useMemo(() => [...finishings].sort(compareByCodeThenName), [finishings]);
+  const nextDisplayCode = useMemo(() => generateNextDisplayCode(displayCodeSource), [displayCodeSource]);
+
+  const defaultDisplayCategory = useMemo(
+    () => categories.find((item) => normalizeText(item.name).includes("display")) ?? categories[0] ?? null,
+    [categories],
+  );
+  const defaultDisplayProduct = useMemo(() => {
+    if (products.length === 0) return null;
+    const displayExact = products.find((item) => normalizeText(item.name) === "display");
+    const displayByName = products.filter((item) => normalizeText(item.name).includes("display"));
+    if (defaultDisplayCategory) {
+      return (
+        (displayExact && displayExact.categoryId === defaultDisplayCategory.id ? displayExact : null) ??
+        displayByName.find((item) => item.categoryId === defaultDisplayCategory.id) ??
+        displayExact ??
+        products.find((item) => item.categoryId === defaultDisplayCategory.id) ??
+        displayByName[0] ??
+        null
+      );
+    }
+    return displayExact ?? displayByName[0] ?? products[0] ?? null;
+  }, [products, defaultDisplayCategory]);
+  const defaultSetUnit = useMemo(
+    () =>
+      units.find((item) => normalizeText(item.name) === "set" || normalizeText(item.code) === "set") ??
+      units.find((item) => normalizeText(item.name).includes("set")) ??
+      units[0] ??
+      null,
+    [units],
+  );
+
+  const selectedCategory = categories.find((item) => item.id === form.categoryId) ?? null;
+  const selectedProduct = products.find((item) => item.id === form.productId) ?? null;
+
+  useEffect(() => {
+    if (!dialogOpen || editing) return;
+    setForm((prev) => ({
+      ...prev,
+      code: prev.code || nextDisplayCode,
+      categoryId: prev.categoryId || defaultDisplayCategory?.id || "",
+      productId: prev.productId || defaultDisplayProduct?.id || "",
+      unitId: prev.unitId || defaultSetUnit?.id || "",
+    }));
+  }, [dialogOpen, editing, nextDisplayCode, defaultDisplayCategory, defaultDisplayProduct, defaultSetUnit]);
 
   const openCreate = () => {
     setEditing(null);
     setForm({
       ...emptyForm,
-      categoryId: categories[0]?.id ?? "",
-      productId: products[0]?.id ?? "",
-      unitId: units[0]?.id ?? "",
-      frameId: frames[0]?.id ?? "",
-      materialId: materials[0]?.id ?? null,
-      finishingId: finishings[0]?.id ?? "",
+      code: nextDisplayCode,
+      categoryId: defaultDisplayCategory?.id ?? "",
+      productId: defaultDisplayProduct?.id ?? "",
+      unitId: defaultSetUnit?.id ?? "",
+      frameId: "",
+      materialId: null,
+      finishingId: "",
     });
     setDialogOpen(true);
   };
@@ -100,17 +176,27 @@ export default function DisplaysPage() {
   };
 
   const handleSave = async () => {
-    if (!form.code.trim()) return toast.error("Kode display wajib diisi");
+    const resolvedCode = form.code.trim() || nextDisplayCode;
+    if (!resolvedCode.trim()) return toast.error("Kode display wajib diisi");
     if (!form.name.trim()) return toast.error("Nama display wajib diisi");
-    if (!form.productId || !form.categoryId || !form.unitId || !form.frameId || !form.finishingId) {
-      return toast.error("Lengkapi semua relasi display");
-    }
+    if (!form.productId || !form.categoryId || !form.unitId) return toast.error("Kategori/produk/satuan wajib valid");
+    if (!form.frameId || !form.materialId || !form.finishingId) return toast.error("Pilih rangka, bahan, dan finishing terlebih dahulu");
+    if (!Number.isFinite(form.sellingPrice) || form.sellingPrice < 0) return toast.error("Harga jual tidak valid");
+    if (!Number.isFinite(form.minimumOrder) || form.minimumOrder < 1) return toast.error("Minimum order tidak valid");
+
+    const payload: DisplayPayload = {
+      ...form,
+      code: resolvedCode,
+      sellingPrice: Math.max(Math.round(form.sellingPrice) || 0, 0),
+      minimumOrder: Math.max(Math.round(form.minimumOrder) || 1, 1),
+    };
+
     try {
       if (editing) {
-        await updateDisplay.mutateAsync({ id: editing.id, ...form, estimateText: form.estimateText || null });
+        await updateDisplay.mutateAsync({ id: editing.id, ...payload, estimateText: payload.estimateText || null });
         toast.success("Display berhasil diperbarui");
       } else {
-        await createDisplay.mutateAsync({ ...form, estimateText: form.estimateText || null });
+        await createDisplay.mutateAsync({ ...payload, estimateText: payload.estimateText || null });
         toast.success("Display berhasil ditambahkan");
       }
       setDialogOpen(false);
@@ -184,7 +270,13 @@ export default function DisplaysPage() {
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent
+          className="max-w-2xl"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            nameInputRef.current?.focus();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>{editing ? "Edit Display" : "Tambah Display"}</DialogTitle>
           </DialogHeader>
@@ -192,43 +284,21 @@ export default function DisplaysPage() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label>Kode Display</Label>
-                <Input value={form.code} onChange={(e) => setForm((prev) => ({ ...prev, code: e.target.value }))} />
+                <Input value={form.code || nextDisplayCode} readOnly className="bg-muted text-muted-foreground" />
               </div>
               <div className="space-y-2">
                 <Label>Nama Display</Label>
-                <Input value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} />
+                <Input ref={nameInputRef} value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label>Kategori</Label>
-                <Select value={form.categoryId} onValueChange={(value) => setForm((prev) => ({ ...prev, categoryId: value }))}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {categories.map((category) => (
-                      <SelectItem key={category.id} value={category.id}>
-                        {category.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Input value={selectedCategory?.name ?? ""} readOnly className="bg-muted text-muted-foreground" />
               </div>
               <div className="space-y-2">
                 <Label>Produk</Label>
-                <Select value={form.productId} onValueChange={(value) => setForm((prev) => ({ ...prev, productId: value }))}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {filteredProducts.map((product) => (
-                      <SelectItem key={product.id} value={product.id}>
-                        {product.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Input value={selectedProduct?.name ?? ""} readOnly className="bg-muted text-muted-foreground" />
               </div>
             </div>
             <div className="grid grid-cols-3 gap-3">
@@ -238,8 +308,8 @@ export default function DisplaysPage() {
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
-                    {units.map((unit) => (
+                  <SelectContent className="max-h-72">
+                    {sortedUnits.map((unit) => (
                       <SelectItem key={unit.id} value={unit.id}>
                         {unit.name}
                       </SelectItem>
@@ -249,12 +319,22 @@ export default function DisplaysPage() {
               </div>
               <div className="space-y-2">
                 <Label>Rangka</Label>
-                <Select value={form.frameId} onValueChange={(value) => setForm((prev) => ({ ...prev, frameId: value }))}>
+                <Select
+                  value={form.frameId || undefined}
+                  onValueChange={(value) => setForm((prev) => ({ ...prev, frameId: value }))}
+                >
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue placeholder="Pilih rangka" />
                   </SelectTrigger>
-                  <SelectContent>
-                    {frames.map((frame) => (
+                  <SelectContent
+                    className="max-h-72"
+                    position="popper"
+                    side="bottom"
+                    sideOffset={6}
+                    align="start"
+                    avoidCollisions={false}
+                  >
+                    {sortedFrames.map((frame) => (
                       <SelectItem key={frame.id} value={frame.id}>
                         {frame.name}
                       </SelectItem>
@@ -265,15 +345,21 @@ export default function DisplaysPage() {
               <div className="space-y-2">
                 <Label>Bahan</Label>
                 <Select
-                  value={form.materialId ?? DISPLAY_MATERIAL_NONE}
-                  onValueChange={(value) => setForm((prev) => ({ ...prev, materialId: value === DISPLAY_MATERIAL_NONE ? null : value }))}
+                  value={form.materialId ?? undefined}
+                  onValueChange={(value) => setForm((prev) => ({ ...prev, materialId: value }))}
                 >
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue placeholder="Pilih bahan" />
                   </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={DISPLAY_MATERIAL_NONE}>Tanpa Bahan</SelectItem>
-                    {materials.map((material) => (
+                  <SelectContent
+                    className="max-h-72"
+                    position="popper"
+                    side="bottom"
+                    sideOffset={6}
+                    align="start"
+                    avoidCollisions={false}
+                  >
+                    {sortedMaterials.map((material) => (
                       <SelectItem key={material.id} value={material.id}>
                         {material.name}
                       </SelectItem>
@@ -285,12 +371,22 @@ export default function DisplaysPage() {
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-2">
                 <Label>Finishing</Label>
-                <Select value={form.finishingId} onValueChange={(value) => setForm((prev) => ({ ...prev, finishingId: value }))}>
+                <Select
+                  value={form.finishingId || undefined}
+                  onValueChange={(value) => setForm((prev) => ({ ...prev, finishingId: value }))}
+                >
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue placeholder="Pilih finishing" />
                   </SelectTrigger>
-                  <SelectContent>
-                    {finishings.map((finishing) => (
+                  <SelectContent
+                    className="max-h-72"
+                    position="popper"
+                    side="bottom"
+                    sideOffset={6}
+                    align="start"
+                    avoidCollisions={false}
+                  >
+                    {sortedFinishings.map((finishing) => (
                       <SelectItem key={finishing.id} value={finishing.id}>
                         {finishing.name}
                       </SelectItem>
@@ -301,10 +397,11 @@ export default function DisplaysPage() {
               <div className="space-y-2">
                 <Label>Harga Jual</Label>
                 <Input
-                  type="number"
-                  min={0}
-                  value={form.sellingPrice}
-                  onChange={(e) => setForm((prev) => ({ ...prev, sellingPrice: Number(e.target.value) }))}
+                  type="text"
+                  inputMode="numeric"
+                  value={formatCurrencyInput(form.sellingPrice)}
+                  onChange={(e) => setForm((prev) => ({ ...prev, sellingPrice: parseCurrencyInput(e.target.value) }))}
+                  placeholder="Rp 0"
                 />
               </div>
               <div className="space-y-2">
@@ -313,7 +410,7 @@ export default function DisplaysPage() {
                   type="number"
                   min={1}
                   value={form.minimumOrder}
-                  onChange={(e) => setForm((prev) => ({ ...prev, minimumOrder: Number(e.target.value) }))}
+                  onChange={(e) => setForm((prev) => ({ ...prev, minimumOrder: Math.max(Number(e.target.value) || 1, 1) }))}
                 />
               </div>
             </div>
@@ -358,5 +455,3 @@ export default function DisplaysPage() {
     </div>
   );
 }
-
-

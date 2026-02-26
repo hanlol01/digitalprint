@@ -1,20 +1,31 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, ShoppingCart, ClipboardList, Package, Users, 
-  Warehouse, Calculator, FileText, Printer, Menu, LogOut, ChevronLeft, ChevronRight, Briefcase, PanelsTopLeft
+  Warehouse, Calculator, FileText, Printer, Menu, LogOut, ChevronLeft, ChevronRight, Briefcase, PanelsTopLeft, Database, ChevronDown
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 
-const navItems = [
+const primaryNavItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/pos', icon: ShoppingCart, label: 'Kasir / POS' },
   { to: '/orders', icon: ClipboardList, label: 'Daftar Order' },
+];
+
+const masterDataItems = [
   { to: '/products', icon: Package, label: 'Produk' },
   { to: '/services', icon: Briefcase, label: 'Jasa' },
   { to: '/displays', icon: PanelsTopLeft, label: 'Display' },
   { to: '/customers', icon: Users, label: 'Pelanggan' },
   { to: '/materials', icon: Warehouse, label: 'Stok Bahan' },
+  { to: '/master-data/categories', icon: Package, label: 'Kategori' },
+  { to: '/master-data/units', icon: Calculator, label: 'Satuan' },
+  { to: '/master-data/finishings', icon: Briefcase, label: 'Finishing' },
+  { to: '/master-data/materials', icon: Warehouse, label: 'Material Jasa' },
+  { to: '/master-data/frames', icon: PanelsTopLeft, label: 'Rangka' },
+];
+
+const secondaryNavItems = [
   { to: '/calculator', icon: Calculator, label: 'Kalkulator Harga' },
   { to: '/reports', icon: FileText, label: 'Laporan Keuangan' },
 ];
@@ -25,9 +36,17 @@ export default function AppLayout() {
   const [sidebarMode, setSidebarMode] = useState<'auto' | 'open' | 'closed'>('auto');
   const [logoError, setLogoError] = useState(false);
   const location = useLocation();
+  const isPathActive = (path: string) => location.pathname === path || location.pathname.startsWith(`${path}/`);
+  const isInMasterData = masterDataItems.some((item) => isPathActive(item.to));
+  const [masterDataOpen, setMasterDataOpen] = useState(isInMasterData);
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const isSidebarExpanded = mobileOpen || sidebarMode === 'open' || (sidebarMode === 'auto' && isSidebarHovered);
+  const navItems = [...primaryNavItems, ...masterDataItems, ...secondaryNavItems];
+
+  useEffect(() => {
+    if (isInMasterData) setMasterDataOpen(true);
+  }, [isInMasterData]);
 
   const initials = (user?.username ?? "US")
     .slice(0, 2)
@@ -83,8 +102,78 @@ export default function AppLayout() {
 
         {/* Nav */}
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {navItems.map((item) => {
-            const isActive = location.pathname === item.to;
+          {primaryNavItems.map((item) => {
+            const isActive = isPathActive(item.to);
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                onClick={() => setMobileOpen(false)}
+                className={`sidebar-item ${
+                  isActive 
+                    ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-md' 
+                    : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                } ${isSidebarExpanded ? '' : 'justify-center px-0'}`}
+                title={isSidebarExpanded ? undefined : item.label}
+              >
+                <item.icon className="w-5 h-5 shrink-0" />
+                {isSidebarExpanded && <span className="animate-fade-in">{item.label}</span>}
+              </NavLink>
+            );
+          })}
+
+          <button
+            type="button"
+            onClick={() => {
+              if (!isSidebarExpanded) {
+                setSidebarMode('open');
+                setIsSidebarHovered(false);
+                setMasterDataOpen(true);
+                return;
+              }
+              setMasterDataOpen((prev) => !prev);
+            }}
+            className={`sidebar-item w-full ${
+              isInMasterData
+                ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-md'
+                : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+            } ${isSidebarExpanded ? '' : 'justify-center px-0'}`}
+            title={isSidebarExpanded ? undefined : 'Master Data'}
+          >
+            <Database className="w-5 h-5 shrink-0" />
+            {isSidebarExpanded ? (
+              <>
+                <span className="animate-fade-in flex-1 text-left">Master Data</span>
+                {masterDataOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              </>
+            ) : null}
+          </button>
+
+          {masterDataOpen && isSidebarExpanded && (
+            <div className="space-y-1 pl-3">
+              {masterDataItems.map((item) => {
+                const isActive = isPathActive(item.to);
+                return (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    onClick={() => setMobileOpen(false)}
+                    className={`sidebar-item ${
+                      isActive 
+                        ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-md' 
+                        : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                    }`}
+                  >
+                    <item.icon className="w-4 h-4 shrink-0" />
+                    <span>{item.label}</span>
+                  </NavLink>
+                );
+              })}
+            </div>
+          )}
+
+          {secondaryNavItems.map((item) => {
+            const isActive = isPathActive(item.to);
             return (
               <NavLink
                 key={item.to}
@@ -154,10 +243,10 @@ export default function AppLayout() {
             <Menu className="w-5 h-5" />
           </button>
           <div className="ml-2 lg:ml-0">
-            <h2 className="text-lg font-semibold text-foreground">
-              {navItems.find(i => i.to === location.pathname)?.label || 'One Stop Service'}
-            </h2>
-          </div>
+              <h2 className="text-lg font-semibold text-foreground">
+                {navItems.find((item) => isPathActive(item.to))?.label || 'One Stop Service'}
+              </h2>
+            </div>
           <div className="ml-auto flex items-center gap-3">
             <div className="hidden sm:flex items-center gap-2 text-sm text-muted-foreground">
               <div className="w-2 h-2 rounded-full bg-success animate-pulse" />

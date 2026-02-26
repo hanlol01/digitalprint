@@ -20,8 +20,8 @@ export const useCategories = (params?: { activeOnly?: boolean; search?: string }
 export const useCreateCategory = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: { name: string; icon: string; isActive?: boolean }) =>
-      postData<ProductCategory, { name: string; icon: string; isActive?: boolean }>("/kategori-produk", payload),
+    mutationFn: (payload: { code?: string; name: string; icon?: string; isActive?: boolean }) =>
+      postData<ProductCategory, { code?: string; name: string; icon?: string; isActive?: boolean }>("/kategori-produk", payload),
     onSuccess: () => queryClient.invalidateQueries({ queryKey }),
   });
 };

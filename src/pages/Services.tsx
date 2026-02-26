@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Edit, Plus, Search, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -34,6 +34,34 @@ const compareByCodeAsc = <T extends { code?: string | null }>(a: T, b: T): numbe
   return 0;
 };
 
+const compareByCodeThenName = <T extends { code?: string | null; name: string }>(a: T, b: T): number => {
+  const byCode = compareByCodeAsc(a, b);
+  if (byCode !== 0) return byCode;
+  return a.name.localeCompare(b.name, "id", { sensitivity: "base" });
+};
+
+const normalizeText = (value?: string | null): string => (value ?? "").trim().toLowerCase();
+
+const parseCurrencyInput = (value: string): number => {
+  const digits = value.replace(/\D/g, "");
+  return digits ? Number(digits) : 0;
+};
+
+const formatCurrencyInput = (value: number): string => {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  return `Rp ${Math.round(value).toLocaleString("id-ID")}`;
+};
+
+const generateNextServiceCode = (services: ServiceCatalog[]): string => {
+  const maxIndex = services.reduce((max, item) => {
+    const match = (item.code ?? "").trim().toLowerCase().match(/^js-(\d+)$/);
+    if (!match) return max;
+    const parsed = Number(match[1]);
+    return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+  }, 0);
+  return `js-${String(Math.max(maxIndex + 1, 1)).padStart(3, "0")}`;
+};
+
 export default function ServicesPage() {
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -43,6 +71,7 @@ export default function ServicesPage() {
   const [form, setForm] = useState<ServicePayload>(emptyForm);
 
   const { data: services = [], isLoading } = useServices({ search });
+  const { data: serviceCodeSource = [] } = useServices();
   const { data: categories = [] } = useCategories({ activeOnly: true });
   const { data: products = [] } = useProducts({ activeOnly: true });
   const { data: units = [] } = useUnits({ activeOnly: true });
@@ -59,16 +88,57 @@ export default function ServicesPage() {
   }, [products, form.categoryId]);
 
   const sortedServices = useMemo(() => [...services].sort(compareByCodeAsc), [services]);
+  const sortedUnits = useMemo(() => [...units].sort(compareByCodeThenName), [units]);
+  const sortedServiceMaterials = useMemo(() => [...serviceMaterials].sort(compareByCodeThenName), [serviceMaterials]);
+  const sortedFinishings = useMemo(() => [...finishings].sort(compareByCodeThenName), [finishings]);
+  const nextServiceCode = useMemo(() => generateNextServiceCode(serviceCodeSource), [serviceCodeSource]);
+
+  const defaultServiceCategory = useMemo(
+    () =>
+      categories.find((item) => {
+        const name = normalizeText(item.name);
+        return name.includes("jasa cutting a3") && name.includes("m2");
+      }) ??
+      categories.find((item) => normalizeText(item.name).includes("jasa cutting")) ??
+      categories[0] ??
+      null,
+    [categories],
+  );
+
+  const defaultServiceProduct = useMemo(() => {
+    if (!defaultServiceCategory) return products[0] ?? null;
+    return products.find((item) => item.categoryId === defaultServiceCategory.id) ?? null;
+  }, [products, defaultServiceCategory]);
+
+  useEffect(() => {
+    if (!dialogOpen || editing) return;
+    setForm((prev) => ({
+      ...prev,
+      code: prev.code || nextServiceCode,
+      categoryId: prev.categoryId || defaultServiceCategory?.id || "",
+      productId: prev.productId || defaultServiceProduct?.id || "",
+    }));
+  }, [dialogOpen, editing, nextServiceCode, defaultServiceCategory, defaultServiceProduct]);
+
+  useEffect(() => {
+    if (!form.categoryId) return;
+    if (filteredProducts.some((item) => item.id === form.productId)) return;
+    setForm((prev) => ({
+      ...prev,
+      productId: filteredProducts[0]?.id ?? "",
+    }));
+  }, [filteredProducts, form.categoryId, form.productId]);
 
   const openCreate = () => {
     setEditing(null);
     setForm({
       ...emptyForm,
-      categoryId: categories[0]?.id ?? "",
-      productId: products[0]?.id ?? "",
-      unitId: units[0]?.id ?? "",
-      serviceMaterialId: serviceMaterials[0]?.id ?? "",
-      finishingId: finishings[0]?.id ?? "",
+      code: nextServiceCode,
+      categoryId: defaultServiceCategory?.id ?? "",
+      productId: defaultServiceProduct?.id ?? "",
+      unitId: "",
+      serviceMaterialId: "",
+      finishingId: "",
     });
     setDialogOpen(true);
   };
@@ -90,17 +160,25 @@ export default function ServicesPage() {
   };
 
   const handleSave = async () => {
-    if (!form.code.trim()) return toast.error("Kode jasa wajib diisi");
+    const resolvedCode = form.code.trim() || nextServiceCode;
+    if (!resolvedCode.trim()) return toast.error("Kode jasa wajib diisi");
     if (!form.productId || !form.categoryId || !form.unitId || !form.serviceMaterialId || !form.finishingId) {
       return toast.error("Lengkapi semua relasi jasa");
     }
+    if (!Number.isFinite(form.sellingPrice) || form.sellingPrice < 0) return toast.error("Harga jual tidak valid");
+
+    const payload: ServicePayload = {
+      ...form,
+      code: resolvedCode,
+      sellingPrice: Math.max(Math.round(form.sellingPrice) || 0, 0),
+    };
 
     try {
       if (editing) {
-        await updateService.mutateAsync({ id: editing.id, ...form, estimateText: form.estimateText || null });
+        await updateService.mutateAsync({ id: editing.id, ...payload, estimateText: payload.estimateText || null });
         toast.success("Jasa berhasil diperbarui");
       } else {
-        await createService.mutateAsync({ ...form, estimateText: form.estimateText || null });
+        await createService.mutateAsync({ ...payload, estimateText: payload.estimateText || null });
         toast.success("Jasa berhasil ditambahkan");
       }
       setDialogOpen(false);
@@ -178,16 +256,16 @@ export default function ServicesPage() {
           <div className="space-y-3">
             <div className="space-y-2">
               <Label>Kode Jasa</Label>
-              <Input value={form.code} onChange={(e) => setForm((prev) => ({ ...prev, code: e.target.value }))} />
+              <Input value={form.code || nextServiceCode} readOnly className="bg-muted text-muted-foreground" />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <div className="space-y-2">
                 <Label>Kategori</Label>
                 <Select value={form.categoryId} onValueChange={(value) => setForm((prev) => ({ ...prev, categoryId: value }))}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="max-h-72">
                     {categories.map((category) => (
                       <SelectItem key={category.id} value={category.id}>
                         {category.name}
@@ -196,15 +274,15 @@ export default function ServicesPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-2 col-span-2">
                 <Label>Produk</Label>
                 <Select value={form.productId} onValueChange={(value) => setForm((prev) => ({ ...prev, productId: value }))}>
-                  <SelectTrigger>
+                  <SelectTrigger className="h-auto min-h-10 [&>span]:line-clamp-none [&>span]:whitespace-normal">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="max-h-72">
                     {filteredProducts.map((product) => (
-                      <SelectItem key={product.id} value={product.id}>
+                      <SelectItem key={product.id} value={product.id} className="whitespace-normal py-2 leading-snug">
                         {product.name}
                       </SelectItem>
                     ))}
@@ -215,14 +293,14 @@ export default function ServicesPage() {
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-2">
                 <Label>Satuan</Label>
-                <Select value={form.unitId} onValueChange={(value) => setForm((prev) => ({ ...prev, unitId: value }))}>
+                <Select value={form.unitId || undefined} onValueChange={(value) => setForm((prev) => ({ ...prev, unitId: value }))}>
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue placeholder="Pilih satuan" />
                   </SelectTrigger>
-                  <SelectContent>
-                    {units.map((unit) => (
+                  <SelectContent className="max-h-72">
+                    {sortedUnits.map((unit) => (
                       <SelectItem key={unit.id} value={unit.id}>
-                        {unit.code} - {unit.name}
+                        {unit.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -230,12 +308,15 @@ export default function ServicesPage() {
               </div>
               <div className="space-y-2">
                 <Label>Material</Label>
-                <Select value={form.serviceMaterialId} onValueChange={(value) => setForm((prev) => ({ ...prev, serviceMaterialId: value }))}>
+                <Select
+                  value={form.serviceMaterialId || undefined}
+                  onValueChange={(value) => setForm((prev) => ({ ...prev, serviceMaterialId: value }))}
+                >
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue placeholder="Pilih material" />
                   </SelectTrigger>
-                  <SelectContent>
-                    {serviceMaterials.map((material) => (
+                  <SelectContent className="max-h-72">
+                    {sortedServiceMaterials.map((material) => (
                       <SelectItem key={material.id} value={material.id}>
                         {material.name}
                       </SelectItem>
@@ -245,12 +326,12 @@ export default function ServicesPage() {
               </div>
               <div className="space-y-2">
                 <Label>Finishing</Label>
-                <Select value={form.finishingId} onValueChange={(value) => setForm((prev) => ({ ...prev, finishingId: value }))}>
+                <Select value={form.finishingId || undefined} onValueChange={(value) => setForm((prev) => ({ ...prev, finishingId: value }))}>
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue placeholder="Pilih finishing" />
                   </SelectTrigger>
-                  <SelectContent>
-                    {finishings.map((finishing) => (
+                  <SelectContent className="max-h-72">
+                    {sortedFinishings.map((finishing) => (
                       <SelectItem key={finishing.id} value={finishing.id}>
                         {finishing.name}
                       </SelectItem>
@@ -263,10 +344,11 @@ export default function ServicesPage() {
               <div className="space-y-2">
                 <Label>Harga Jual</Label>
                 <Input
-                  type="number"
-                  min={0}
-                  value={form.sellingPrice}
-                  onChange={(e) => setForm((prev) => ({ ...prev, sellingPrice: Number(e.target.value) }))}
+                  type="text"
+                  inputMode="numeric"
+                  value={formatCurrencyInput(form.sellingPrice)}
+                  onChange={(e) => setForm((prev) => ({ ...prev, sellingPrice: parseCurrencyInput(e.target.value) }))}
+                  placeholder="Rp 0"
                 />
               </div>
               <div className="space-y-2">
@@ -311,5 +393,3 @@ export default function ServicesPage() {
     </div>
   );
 }
-
-

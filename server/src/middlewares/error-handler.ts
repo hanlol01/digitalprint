@@ -39,6 +39,16 @@ export const errorHandler = (error: unknown, _req: Request, res: Response, _next
         kode_jasa: "kode jasa",
         kode_display: "kode display",
         kode_bahan: "kode bahan",
+        kode_kategori: "kode kategori",
+        nama: "nama",
+        kode_satuan: "kode satuan",
+        nama_satuan: "nama satuan",
+        kode_finishing: "kode finishing",
+        nama_finishing: "nama finishing",
+        kode_material: "kode material",
+        nama_material: "nama material",
+        kode_rangka: "kode rangka",
+        nama_rangka: "nama rangka",
       };
       const readableFields = targetFields
         .map((field) => fieldLabelMap[field] ?? field.replace(/_/g, " "))
