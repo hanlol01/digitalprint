@@ -1,5 +1,5 @@
-﻿import { useMemo, useState } from "react";
-import { Eye, Filter, Search, User, Phone, Calendar, Clock, CreditCard, Wallet, Package, FileText, ShoppingBag, Trash2 } from "lucide-react";
+﻿import { useEffect, useMemo, useState } from "react";
+import { Eye, Filter, Search, User, Phone, Calendar, Clock, CreditCard, Wallet, Package, FileText, ShoppingBag, Trash2, CheckCircle2, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import { toast } from "sonner";
 
 const statusSteps: OrderStatus[] = ["menunggu_desain", "proses_cetak", "finishing", "selesai", "sudah_diambil"];
 const settlementMethods: PaymentMethod[] = ["cash", "transfer", "qris"];
+const ROWS_PER_PAGE = 10;
 const transactionTypes: Array<"all" | TransactionItemType> = ["all", "produk", "jasa", "display"];
 const transactionTypeLabel: Record<"all" | TransactionItemType, string> = {
   all: "Semua Tipe",
@@ -28,15 +29,87 @@ const parseCurrencyInput = (value: string): number => {
   const digits = value.replace(/\D/g, "");
   return digits ? Number(digits) : 0;
 };
+const fallbackText = (value?: string | null, empty = "-"): string => {
+  const normalized = value?.trim();
+  return normalized ? normalized : empty;
+};
+const splitMaterialFinishing = (value?: string | null): { material: string; finishing: string } => {
+  const normalized = fallbackText(value, "");
+  if (!normalized) return { material: "", finishing: "" };
+  const parts = normalized.split(" - ").map((part) => part.trim()).filter(Boolean);
+  if (parts.length >= 2) {
+    return {
+      material: parts[0],
+      finishing: parts.slice(1).join(" - "),
+    };
+  }
+  return { material: normalized, finishing: "" };
+};
+const getOrderItemMaterialLabel = (item: Order["items"][number]): string => {
+  if (item.itemType === "produk") {
+    return fallbackText(item.itemLabel ?? item.variantName, "-");
+  }
+  if (item.itemType === "jasa") {
+    return fallbackText(splitMaterialFinishing(item.variantName ?? item.itemLabel).material, "-");
+  }
+  if (item.itemType === "display") {
+    return fallbackText(item.itemLabel, "-");
+  }
+  return "-";
+};
+const getOrderItemFinishingLabel = (item: Order["items"][number]): string => {
+  if (item.itemType === "produk") {
+    return item.finishing ? "Dengan Finishing" : "Tanpa Finishing";
+  }
+  const parsedFinishing = splitMaterialFinishing(item.variantName).finishing;
+  return fallbackText(parsedFinishing, "Tanpa Finishing");
+};
+const formatDateLabel = (value?: string | null): string => {
+  if (!value) return "-";
+  return new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+};
+const formatDateTimeLabel = (value?: string | null): string => {
+  if (!value) return "-";
+  return new Date(value).toLocaleString("id-ID", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
 const getRemainingAmount = (order: Order) => Math.max(Number(order.remainingAmount ?? 0), 0);
 const getPaymentStatus = (order: Order) => (getRemainingAmount(order) > 0 ? "belum_lunas" : "lunas");
 type PaymentFilter = "all" | "lunas" | "belum_lunas";
+type SortOption = "terbaru" | "terlama";
+
+/**
+ * Mengekstrak tanggal dari orderNumber (format: ORD-YYYYMMDD-XXX)
+ * Jika gagal, fallback ke createdAt. Jika keduanya tidak ada, return epoch 0.
+ */
+const getOrderDate = (order: Order): number => {
+  // Coba parse dari createdAt dulu (paling akurat)
+  if (order.createdAt) {
+    const d = new Date(order.createdAt).getTime();
+    if (!isNaN(d)) return d;
+  }
+  // Fallback: parse dari orderNumber (ORD-YYYYMMDD-XXX)
+  const match = order.orderNumber?.match(/ORD-(\d{4})(\d{2})(\d{2})-(\d+)/);
+  if (match) {
+    const [, year, month, day, seq] = match;
+    // Gabungkan tanggal + sequence untuk sortir stabil
+    return new Date(`${year}-${month}-${day}`).getTime() + Number(seq);
+  }
+  return 0;
+};
 
 export default function Orders() {
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [filterPayment, setFilterPayment] = useState<PaymentFilter>("all");
   const [filterItemType, setFilterItemType] = useState<"all" | TransactionItemType>("all");
   const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [sortOrder, setSortOrder] = useState<SortOption>("terbaru");
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [settlementOpen, setSettlementOpen] = useState(false);
   const [settlementOrder, setSettlementOrder] = useState<Order | null>(null);
@@ -49,10 +122,47 @@ export default function Orders() {
   const formattedSettlementAmount = settlementAmount.toLocaleString("id-ID");
   const isSettlementInvalid = !settlementOrder || settlementAmount !== settlementRemainingAmount;
 
+  // Filter berdasarkan pembayaran
   const filteredOrders = useMemo(() => {
-    if (filterPayment === "all") return orders;
-    return orders.filter((order) => getPaymentStatus(order) === filterPayment);
+    let result = orders;
+    if (filterPayment !== "all") {
+      result = result.filter((order) => getPaymentStatus(order) === filterPayment);
+    }
+    return result;
   }, [orders, filterPayment]);
+
+  // Sortir berdasarkan tanggal
+  const sortedOrders = useMemo(() => {
+    const sorted = [...filteredOrders].sort((a, b) => {
+      const dateA = getOrderDate(a);
+      const dateB = getOrderDate(b);
+      return sortOrder === "terbaru" ? dateB - dateA : dateA - dateB;
+    });
+    return sorted;
+  }, [filteredOrders, sortOrder]);
+
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(sortedOrders.length / ROWS_PER_PAGE));
+  const paginatedOrders = useMemo(() => {
+    const startIndex = (currentPage - 1) * ROWS_PER_PAGE;
+    return sortedOrders.slice(startIndex, startIndex + ROWS_PER_PAGE);
+  }, [sortedOrders, currentPage]);
+  const hasNextPage = currentPage * ROWS_PER_PAGE < sortedOrders.length;
+  const hasPrevPage = currentPage > 1;
+  const startRow = sortedOrders.length === 0 ? 0 : (currentPage - 1) * ROWS_PER_PAGE + 1;
+  const endRow = sortedOrders.length === 0 ? 0 : Math.min(currentPage * ROWS_PER_PAGE, sortedOrders.length);
+
+  // Reset halaman saat filter/search/sort berubah
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, filterStatus, filterPayment, filterItemType, sortOrder]);
+
+  // Pastikan currentPage tidak melebihi total halaman
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [sortedOrders.length, currentPage, totalPages]);
 
   const statusCountMap = useMemo(() => {
     const result = new Map<OrderStatus, number>();
@@ -111,10 +221,11 @@ export default function Orders() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 bg-card"
+            data-testid="search-input"
           />
         </div>
         <Select value={filterStatus} onValueChange={setFilterStatus}>
-          <SelectTrigger className="w-full sm:w-48 bg-card">
+          <SelectTrigger className="w-full sm:w-48 bg-card" data-testid="filter-status">
             <Filter className="w-4 h-4 mr-2" />
             <SelectValue placeholder="Filter status" />
           </SelectTrigger>
@@ -128,7 +239,7 @@ export default function Orders() {
           </SelectContent>
         </Select>
         <Select value={filterPayment} onValueChange={(value) => setFilterPayment(value as PaymentFilter)}>
-          <SelectTrigger className="w-full sm:w-52 bg-card">
+          <SelectTrigger className="w-full sm:w-52 bg-card" data-testid="filter-payment">
             <Filter className="w-4 h-4 mr-2" />
             <SelectValue placeholder="Filter pembayaran" />
           </SelectTrigger>
@@ -139,7 +250,7 @@ export default function Orders() {
           </SelectContent>
         </Select>
         <Select value={filterItemType} onValueChange={(value) => setFilterItemType(value as "all" | TransactionItemType)}>
-          <SelectTrigger className="w-full sm:w-44 bg-card">
+          <SelectTrigger className="w-full sm:w-44 bg-card" data-testid="filter-item-type">
             <Filter className="w-4 h-4 mr-2" />
             <SelectValue placeholder="Filter tipe" />
           </SelectTrigger>
@@ -149,6 +260,17 @@ export default function Orders() {
                 {transactionTypeLabel[type]}
               </SelectItem>
             ))}
+          </SelectContent>
+        </Select>
+        {/* Sortir berdasarkan tanggal */}
+        <Select value={sortOrder} onValueChange={(value) => setSortOrder(value as SortOption)}>
+          <SelectTrigger className="w-full sm:w-48 bg-card" data-testid="sort-date">
+            <ArrowUpDown className="w-4 h-4 mr-2" />
+            <SelectValue placeholder="Urutkan" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="terbaru">Tanggal Terbaru</SelectItem>
+            <SelectItem value="terlama">Tanggal Terlama</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -164,6 +286,7 @@ export default function Orders() {
               className={`p-3 rounded-lg border text-center transition-all ${
                 filterStatus === status ? "border-primary bg-primary/5" : "border-border bg-card hover:bg-muted/50"
               }`}
+              data-testid={`status-count-${status}`}
             >
               <p className="text-xl font-bold text-foreground">{count}</p>
               <p className="text-xs text-muted-foreground">{config.label}</p>
@@ -178,7 +301,20 @@ export default function Orders() {
           <table className="w-full text-sm" data-testid="orders-table">
             <thead>
               <tr className="border-b border-border bg-muted/50">
-                <th className="text-left font-semibold text-muted-foreground px-4 py-3 whitespace-nowrap">No. Order</th>
+                <th className="text-left font-semibold text-muted-foreground px-4 py-3 whitespace-nowrap">
+                  <button
+                    className="flex items-center gap-1.5 hover:text-foreground transition-colors"
+                    onClick={() => setSortOrder(sortOrder === "terbaru" ? "terlama" : "terbaru")}
+                    data-testid="sort-toggle-header"
+                  >
+                    No. Order
+                    {sortOrder === "terbaru" ? (
+                      <ArrowDown className="w-3.5 h-3.5 text-primary" />
+                    ) : (
+                      <ArrowUp className="w-3.5 h-3.5 text-primary" />
+                    )}
+                  </button>
+                </th>
                 <th className="text-left font-semibold text-muted-foreground px-4 py-3 whitespace-nowrap">Status</th>
                 <th className="text-left font-semibold text-muted-foreground px-4 py-3 whitespace-nowrap">Pembayaran</th>
                 <th className="text-left font-semibold text-muted-foreground px-4 py-3 whitespace-nowrap">Tipe</th>
@@ -195,7 +331,7 @@ export default function Orders() {
                   </td>
                 </tr>
               )}
-              {!isLoading && filteredOrders.length === 0 && (
+              {!isLoading && sortedOrders.length === 0 && (
                 <tr>
                   <td colSpan={7} className="text-center py-12 text-muted-foreground">
                     Tidak ada order ditemukan.
@@ -203,7 +339,7 @@ export default function Orders() {
                 </tr>
               )}
               {!isLoading &&
-                filteredOrders.map((order) => {
+                paginatedOrders.map((order) => {
                   const statusConfig = ORDER_STATUS_CONFIG[order.status];
                   const isPaid = getPaymentStatus(order) === "lunas";
                   const orderItemTypes = (order.itemTypes?.length ? order.itemTypes : [...new Set(order.items.map((item) => item.itemType))]) as TransactionItemType[];
@@ -301,6 +437,37 @@ export default function Orders() {
             </tbody>
           </table>
         </div>
+        {/* ============ PAGINATION FOOTER ============ */}
+        <div className="flex items-center justify-between border-t border-border/60 px-4 py-3" data-testid="pagination-footer">
+          <p className="text-xs text-muted-foreground" data-testid="pagination-info">
+            Menampilkan {startRow}-{endRow} dari {sortedOrders.length} data
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+              disabled={isLoading || !hasPrevPage}
+              data-testid="pagination-prev"
+            >
+              Previous 10
+            </Button>
+            <span className="text-xs text-muted-foreground font-medium px-2" data-testid="pagination-page-info">
+              {currentPage} / {totalPages}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((prev) => prev + 1)}
+              disabled={isLoading || !hasNextPage}
+              data-testid="pagination-next"
+            >
+              Next 10
+            </Button>
+          </div>
+        </div>
       </div>
 
       {/* ============ DETAIL ORDER DIALOG (REDESIGNED) ============ */}
@@ -310,6 +477,9 @@ export default function Orders() {
             const isPaid = getPaymentStatus(selectedOrder) === "lunas";
             const remaining = getRemainingAmount(selectedOrder);
             const currentStatusIndex = statusSteps.indexOf(selectedOrder.status);
+            const isOrderCompleted = selectedOrder.status === "selesai" || selectedOrder.status === "sudah_diambil";
+            const checkoutDate = formatDateTimeLabel(selectedOrder.createdAt);
+            const completedDate = isOrderCompleted ? formatDateTimeLabel(selectedOrder.updatedAt ?? null) : "-";
 
             return (
               <>
@@ -337,10 +507,10 @@ export default function Orders() {
                 </div>
 
                 <div className="px-6 py-5 space-y-5">
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
-                    <div className="min-w-0 h-full lg:h-[370px] flex flex-col gap-5">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+                    <div className="min-w-0 flex flex-col gap-5">
                       {/* Informasi Pelanggan Card */}
-                      <div className="rounded-xl border border-border/ bg-card overflow-hidden flex-1" data-testid="customer-info-card">
+                      <div className="rounded-xl border border-border/ bg-card overflow-hidden" data-testid="customer-info-card">
                         <div className="px-4 py-2.5 bg-muted/40 border-b border-border/40">
                           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Informasi Pelanggan</p>
                         </div>
@@ -370,7 +540,7 @@ export default function Orders() {
                             <div className="min-w-0">
                               <p className="text-[11px] text-muted-foreground font-medium">Deadline</p>
                               <p className="text-sm font-semibold text-foreground" data-testid="detail-deadline">
-                                {selectedOrder.deadline ? new Date(selectedOrder.deadline).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : "-"}
+                                {formatDateLabel(selectedOrder.deadline)}
                               </p>
                             </div>
                           </div>
@@ -383,11 +553,29 @@ export default function Orders() {
                               <p className="text-sm font-semibold text-foreground" data-testid="detail-estimation">{selectedOrder.estimatedMinutes} menit</p>
                             </div>
                           </div>
+                          <div className="flex items-start gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-cyan-500/10 flex items-center justify-center shrink-0 mt-0.5">
+                              <Calendar className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-[11px] text-muted-foreground font-medium">Tanggal Checkout</p>
+                              <p className="text-sm font-semibold text-foreground" data-testid="detail-checkout-date">{checkoutDate}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-start gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0 mt-0.5">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-[11px] text-muted-foreground font-medium">Tanggal Pesanan Selesai</p>
+                              <p className="text-sm font-semibold text-foreground" data-testid="detail-completed-date">{completedDate}</p>
+                            </div>
+                          </div>
                         </div>
                       </div>
 
                       {/* Informasi Pembayaran Card */}
-                      <div className="rounded-xl border border-border/60 bg-card overflow-hidden flex-1" data-testid="payment-info-card">
+                      <div className="rounded-xl border border-border/60 bg-card overflow-hidden" data-testid="payment-info-card">
                         <div className="px-4 py-2.5 bg-muted/40 border-b border-border/40">
                           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Informasi Pembayaran</p>
                         </div>
@@ -426,7 +614,7 @@ export default function Orders() {
                     </div>
 
                     {/* Daftar Item */}
-                    <div className="rounded-xl border border-border/60 bg-card overflow-hidden min-w-0 h-full lg:h-[370px] flex flex-col" data-testid="items-list-card">
+                    <div className="rounded-xl border border-border/60 bg-card overflow-hidden min-w-0 lg:h-[360px] flex flex-col" data-testid="items-list-card">
                       <div className="px-4 py-2.5 bg-muted/40 border-b border-border/40 flex items-center justify-between">
                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Daftar Item</p>
                         <span className="text-[11px] text-muted-foreground font-medium bg-muted rounded-full px-2.5 py-0.5" data-testid="items-total-count">
@@ -462,6 +650,10 @@ export default function Orders() {
                               </div>
                               <p className="text-xs text-muted-foreground mt-0.5" data-testid={`item-qty-${index}`}>
                                 {item.quantity ?? item.jumlah ?? 1} x {formatCurrency(item.hargaSatuan ?? item.subtotal)}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-0.5" data-testid={`item-material-finishing-${index}`}>
+                                Bahan: <span className="text-foreground">{getOrderItemMaterialLabel(item)}</span> | Finishing:{" "}
+                                <span className="text-foreground">{getOrderItemFinishingLabel(item)}</span>
                               </p>
                             </div>
                             <p className="text-sm font-bold text-foreground shrink-0 text-right min-w-[120px]" data-testid={`item-subtotal-${index}`}>
@@ -545,40 +737,58 @@ export default function Orders() {
         </DialogContent>
       </Dialog>
 
-      {/* ============ SETTLEMENT DIALOG (UNCHANGED) ============ */}
+      {/* ============ SETTLEMENT DIALOG ============ */}
       <Dialog open={settlementOpen} onOpenChange={setSettlementOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Pembayaran Belum Lunas</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Pesanan ini masih <span className="text-destructive font-medium">belum lunas</span>. Pilih metode pembayaran
-              pelunasan untuk melanjutkan status ke <span className="font-medium text-foreground">Sudah Diambil</span>.
+        <DialogContent className="sm:max-w-[460px] p-0 gap-0 overflow-hidden" data-testid="settlement-dialog">
+          {/* Header */}
+          <div className="px-6 pt-6 pb-4">
+            <DialogHeader>
+              <DialogTitle className="text-xl font-bold text-foreground tracking-tight" data-testid="settlement-dialog-title">
+                Pembayaran Belum Lunas
+              </DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground mt-2.5 leading-relaxed">
+              Pesanan ini masih <span className="text-destructive font-semibold">belum lunas</span>. Pilih metode pembayaran
+              pelunasan untuk melanjutkan status ke <span className="font-semibold text-foreground">Sudah Diambil</span>.
             </p>
-            <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-1.5 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Total</span>
-                <span className="font-medium text-foreground">{formatCurrency(settlementOrder?.total ?? 0)}</span>
+          </div>
+
+          <div className="px-6 pb-6 space-y-5">
+            {/* Ringkasan Pembayaran */}
+            <div className="rounded-xl border border-border overflow-hidden" data-testid="settlement-summary">
+              <div className="px-4 py-3 flex justify-between items-center bg-muted/30">
+                <span className="text-sm text-muted-foreground">Total</span>
+                <span className="text-sm font-semibold text-foreground" data-testid="settlement-total">
+                  {formatCurrency(settlementOrder?.total ?? 0)}
+                </span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Sudah Dibayar</span>
-                <span className="font-medium text-foreground">{formatCurrency(settlementOrder?.paidAmount ?? 0)}</span>
+              <div className="border-t border-border/60 px-4 py-3 flex justify-between items-center bg-muted/30">
+                <span className="text-sm text-muted-foreground">Sudah Dibayar</span>
+                <span className="text-sm font-semibold text-foreground" data-testid="settlement-paid">
+                  {formatCurrency(settlementOrder?.paidAmount ?? 0)}
+                </span>
               </div>
-              <div className="flex justify-between pt-1 border-t border-border">
-                <span className="text-muted-foreground">Sisa Pembayaran</span>
-                <span className="font-semibold text-destructive">{formatCurrency(settlementRemainingAmount)}</span>
+              <div className="border-t-2 border-dashed border-border px-4 py-3.5 flex justify-between items-center bg-destructive/5">
+                <span className="text-sm font-medium text-destructive/80">Sisa Pembayaran</span>
+                <span className="text-base font-bold text-destructive" data-testid="settlement-remaining">
+                  {formatCurrency(settlementRemainingAmount)}
+                </span>
               </div>
             </div>
+
+            {/* Metode Pembayaran */}
             <div>
-              <label className="text-sm font-medium text-foreground mb-1.5 block">Metode Pembayaran</label>
-              <div className="grid grid-cols-3 gap-2">
+              <label className="text-sm font-semibold text-foreground mb-2.5 block">Metode Pembayaran</label>
+              <div className="grid grid-cols-3 gap-2.5" data-testid="settlement-method-grid">
                 {settlementMethods.map((method) => (
                   <button
                     key={method}
                     onClick={() => setSettlementMethod(method)}
-                    className={`p-2 rounded-lg border text-sm font-medium transition-all ${
-                      settlementMethod === method ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-muted"
+                    data-testid={`settlement-method-${method}`}
+                    className={`py-2.5 px-3 rounded-xl border-2 text-sm font-semibold transition-all duration-200 ${
+                      settlementMethod === method
+                        ? "border-primary bg-primary text-primary-foreground shadow-md shadow-primary/25"
+                        : "border-border bg-card text-muted-foreground hover:border-muted-foreground/30 hover:bg-muted/50"
                     }`}
                   >
                     {PAYMENT_METHOD_LABELS[method]}
@@ -586,26 +796,37 @@ export default function Orders() {
                 ))}
               </div>
             </div>
+
+            {/* Nominal Pelunasan */}
             <div>
-              <label className="text-sm font-medium text-foreground mb-1.5 block">Nominal Pelunasan</label>
-              <div className="flex items-center gap-2">
-                <span className="text-muted-foreground font-bold">Rp</span>
+              <label className="text-sm font-semibold text-foreground mb-2.5 block">Nominal Pelunasan</label>
+              <div className="relative" data-testid="settlement-amount-wrapper">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-muted-foreground select-none pointer-events-none">
+                  Rp
+                </span>
                 <Input
                   type="text"
                   inputMode="numeric"
                   value={formattedSettlementAmount}
                   onChange={(e) => setSettlementAmount(parseCurrencyInput(e.target.value))}
-                  className="text-right"
+                  data-testid="settlement-amount-input"
+                  className="pl-11 text-right text-base font-semibold h-12 rounded-xl border-2 border-border focus:border-primary transition-colors"
                 />
               </div>
               {isSettlementInvalid ? (
-                <p className="text-xs text-destructive mt-1">Nominal pelunasan harus sama dengan sisa pembayaran.</p>
+                <p className="text-xs text-destructive mt-2 font-medium" data-testid="settlement-amount-error">
+                  Nominal pelunasan harus sama dengan sisa pembayaran.
+                </p>
               ) : null}
             </div>
-            <div className="flex justify-end gap-2">
+
+            {/* Tombol Aksi */}
+            <div className="flex gap-3 pt-1">
               <Button
                 type="button"
                 variant="outline"
+                className="flex-1 h-11 rounded-xl border-2 font-semibold"
+                data-testid="settlement-cancel-btn"
                 onClick={() => {
                   setSettlementOpen(false);
                   setSettlementOrder(null);
@@ -614,7 +835,13 @@ export default function Orders() {
               >
                 Batal
               </Button>
-              <Button type="button" onClick={handleConfirmSettlement} disabled={updateStatus.isPending || isSettlementInvalid}>
+              <Button
+                type="button"
+                className="flex-1 h-11 rounded-xl font-semibold shadow-md shadow-primary/25"
+                data-testid="settlement-confirm-btn"
+                onClick={handleConfirmSettlement}
+                disabled={updateStatus.isPending || isSettlementInvalid}
+              >
                 {updateStatus.isPending ? "Menyimpan..." : "Lunasi & Sudah Diambil"}
               </Button>
             </div>

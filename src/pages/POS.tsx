@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { CreditCard, Plus, ShoppingCart, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -12,6 +12,7 @@ import { useCustomers } from "@/hooks/useCustomers";
 import { useServices } from "@/hooks/useServices";
 import { useDisplays } from "@/hooks/useDisplays";
 import { formatCurrency } from "@/lib/format";
+import { printReceipt, type ReceiptData } from "@/lib/printReceipt";
 import { PAYMENT_METHOD_LABELS, type CartItem, type DisplayCatalog, type MaterialVariant, type PaymentMethod, type Product, type ServiceCatalog, type TransactionItemType } from "@/types";
 import { toast } from "sonner";
 
@@ -112,6 +113,20 @@ const unitSuffixFromName = (value?: string | null): string => {
 };
 const normalizeDisplayMaterialValue = (materialId?: string | null): string => materialId ?? DISPLAY_MATERIAL_NONE;
 const normalizeMinimumOrder = (value?: number | null): number => Math.max(Number(value) || 1, 1);
+const fallbackLabel = (value?: string | null, empty = "-"): string => {
+  const normalized = value?.trim();
+  return normalized ? normalized : empty;
+};
+const getCartMaterialLabel = (item: CartItem): string => {
+  if (item.itemType === "produk") return fallbackLabel(item.selectedMaterial?.material?.name, "-");
+  if (item.itemType === "jasa") return fallbackLabel(item.selectedService?.serviceMaterial?.name, "-");
+  return fallbackLabel(item.selectedDisplay?.material?.name, "Tanpa Bahan");
+};
+const getCartFinishingLabel = (item: CartItem): string => {
+  if (item.itemType === "produk") return fallbackLabel(item.selectedMaterial?.finishing?.name, "Tanpa Finishing");
+  if (item.itemType === "jasa") return fallbackLabel(item.selectedService?.finishing?.name, "Tanpa Finishing");
+  return fallbackLabel(item.selectedDisplay?.finishing?.name, "Tanpa Finishing");
+};
 
 const compareByCodeThenName = (a: { code?: string | null; name: string }, b: { code?: string | null; name: string }): number => {
   const codeA = (a.code ?? "").trim();
@@ -703,7 +718,37 @@ export default function POS() {
     }
 
     try {
-      await createOrder.mutateAsync({
+      // Simpan snapshot data nota sebelum state di-reset.
+      const receiptItems = cart.map((item) => ({
+        name:
+          item.itemType === "produk"
+            ? item.product.name
+            : item.itemType === "jasa"
+              ? (item.selectedService?.code ?? "-")
+              : (item.selectedDisplay?.name ?? "-"),
+        itemType: item.itemType,
+        material: getCartMaterialLabel(item),
+        finishing: getCartFinishingLabel(item),
+        quantity: item.quantity,
+        width: item.width,
+        height: item.height,
+        subtotal: item.subtotal,
+      }));
+
+      const receiptSnapshot = {
+        customerName: trimmedName,
+        customerPhone: normalizedPhone,
+        items: receiptItems,
+        subtotal: cartTotal,
+        discount,
+        grandTotal,
+        paymentMethod,
+        amountPaid: paymentMethod === "piutang" ? downPaymentAmount : amountPaid,
+        changeAmount: paymentMethod === "cash" ? changeAmount : undefined,
+        remainingDebt: paymentMethod === "piutang" ? remainingPiutangAmount : undefined,
+      };
+
+      const result = await createOrder.mutateAsync({
         customerName: trimmedName,
         customerPhone: normalizedPhone,
         paymentMethod,
@@ -748,6 +793,21 @@ export default function POS() {
           };
         }),
       });
+
+      // Cetak nota setelah transaksi berhasil.
+      const orderNumber = result.orderNumber ?? result.id ?? `INV-${Date.now()}`;
+
+      const receiptData: ReceiptData = {
+        orderNumber: String(orderNumber),
+        date: new Date(),
+        // Ganti dengan data kasir dari auth context jika tersedia.
+        cashierName: "Admin",
+        ...receiptSnapshot,
+      };
+
+      printReceipt(receiptData);
+
+      // Reset state setelah cetak.
       toast.success("Transaksi berhasil disimpan");
       setCart([]);
       setDiscount(0);
@@ -837,7 +897,7 @@ export default function POS() {
         </div>
       </div>
 
-      <div className="w-full lg:w-80 lg:shrink-0 flex flex-col bg-card rounded-xl border border-border shadow-sm p-4 min-h-0">
+      <div className="w-full lg:w-[420px] lg:shrink-0 flex flex-col bg-card rounded-xl border border-border shadow-sm p-4 min-h-0">
         <div className="flex items-center gap-2 mb-3">
           <ShoppingCart className="w-5 h-5 text-primary" />
           <h3 className="font-semibold text-foreground">Keranjang</h3>
@@ -860,6 +920,10 @@ export default function POS() {
                     {item.quantity}x
                     {item.width && item.height ? ` | ${item.width}x${item.height}` : ""}
                     {` | ${formatCurrency(item.subtotal)}`}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Bahan: <span className="text-foreground">{getCartMaterialLabel(item)}</span> | Finishing:{" "}
+                    <span className="text-foreground">{getCartFinishingLabel(item)}</span>
                   </p>
                 </div>
                 <button onClick={() => removeFromCart(item.id)} className="p-1 text-destructive/70 hover:text-destructive rounded">

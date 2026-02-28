@@ -227,6 +227,7 @@ export interface Order {
   notes: string;
   deadline: string | null;
   createdAt: string;
+  updatedAt?: string;
   designFileUrl?: string | null;
   estimatedMinutes: number;
 }
