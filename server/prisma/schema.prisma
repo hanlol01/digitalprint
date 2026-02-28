@@ -373,6 +373,9 @@ model Order {
   customerName     String        @map("nama_pelanggan")
   customerPhone    String        @map("telepon_pelanggan")
   paymentMethod    PaymentMethod @map("metode_pembayaran")
+  downPayment      Int           @default(0) @map("uang_muka")
+  paidAmount       Int           @default(0) @map("jumlah_dibayar")
+  remainingAmount  Int           @default(0) @map("sisa_pembayaran")
   status          OrderStatus   @default(menunggu_desain)
   subtotal        Int
   discount        Int           @default(0) @map("diskon")
@@ -474,3 +477,4 @@ model Expense {
   @@index([deletedAt])
   @@map("pengeluaran")
 }
+

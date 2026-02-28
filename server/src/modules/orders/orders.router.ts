@@ -45,6 +45,7 @@ const createOrderSchema = z.object({
   customerName: z.string().min(1),
   customerPhone: z.string().min(6),
   paymentMethod: z.nativeEnum(PaymentMethod),
+  downPayment: z.number().int().nonnegative().optional(),
   discount: z.number().int().nonnegative().default(0),
   tax: z.number().int().nonnegative().default(0),
   notes: z.string().max(500).optional(),
@@ -56,6 +57,7 @@ const createOrderSchema = z.object({
 const updateStatusSchema = z.object({
   status: z.nativeEnum(OrderStatus),
   paymentMethod: z.nativeEnum(PaymentMethod).optional(),
+  settlementAmount: z.number().int().positive().optional(),
 });
 
 const ordersRouter = Router();
@@ -93,6 +95,27 @@ const pricingUnitFromUnitName = (value: string | null | undefined): PricingUnit 
   if (unit === "cm") return PricingUnit.per_cm;
   if (unit === "lembar" || unit === "a3") return PricingUnit.per_lembar;
   return PricingUnit.per_pcs;
+};
+
+const resolveOrderPaymentOnCreate = (paymentMethod: PaymentMethod, total: number, downPaymentInput: number | undefined) => {
+  if (paymentMethod !== PaymentMethod.piutang) {
+    return {
+      downPayment: 0,
+      paidAmount: total,
+      remainingAmount: 0,
+    };
+  }
+
+  const downPayment = Math.min(downPaymentInput ?? 0, total);
+  if (total > 0 && downPayment >= total) {
+    throw new ApiError(400, "Untuk metode piutang, nominal DP harus lebih kecil dari total");
+  }
+
+  return {
+    downPayment,
+    paidAmount: downPayment,
+    remainingAmount: Math.max(total - downPayment, 0),
+  };
 };
 
 ordersRouter.get(
@@ -505,6 +528,7 @@ ordersRouter.post(
     }
 
     const total = Math.max(subtotal - body.discount + body.tax, 0);
+    const paymentSnapshot = resolveOrderPaymentOnCreate(body.paymentMethod, total, body.downPayment);
 
     const created = await prisma.$transaction(
       async (tx) => {
@@ -539,6 +563,9 @@ ordersRouter.post(
             customerName: body.customerName,
             customerPhone: normalizedCustomerPhone,
             paymentMethod: body.paymentMethod,
+            downPayment: paymentSnapshot.downPayment,
+            paidAmount: paymentSnapshot.paidAmount,
+            remainingAmount: paymentSnapshot.remainingAmount,
             subtotal,
             discount: body.discount,
             tax: body.tax,
@@ -636,7 +663,7 @@ ordersRouter.patch(
   validateBody(updateStatusSchema),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
-    const { status, paymentMethod } = req.body as z.infer<typeof updateStatusSchema>;
+    const { status, paymentMethod, settlementAmount } = req.body as z.infer<typeof updateStatusSchema>;
 
     const order = await prisma.order.findFirst({ where: { id, deletedAt: null } });
     if (!order) {
@@ -653,19 +680,32 @@ ordersRouter.patch(
     }
 
     const isMovingToPickedUp = status === OrderStatus.sudah_diambil;
-    const isUnpaidOrder = order.paymentMethod === PaymentMethod.piutang;
+    const outstandingAmount = Math.max(order.remainingAmount, 0);
+    const isUnpaidOrder = outstandingAmount > 0;
     if (isMovingToPickedUp && isUnpaidOrder) {
       if (!paymentMethod || paymentMethod === PaymentMethod.piutang) {
         throw new ApiError(400, "Pesanan belum lunas. Pilih metode pembayaran selain piutang untuk pelunasan");
       }
+      if (!settlementAmount) {
+        throw new ApiError(400, "Nominal pelunasan wajib diisi");
+      }
+      if (settlementAmount !== outstandingAmount) {
+        throw new ApiError(400, "Nominal pelunasan harus sama dengan sisa pembayaran");
+      }
+    }
+
+    const updateData: Prisma.OrderUpdateInput = {
+      status,
+    };
+    if (isMovingToPickedUp && isUnpaidOrder && paymentMethod) {
+      updateData.paymentMethod = paymentMethod;
+      updateData.paidAmount = order.paidAmount + outstandingAmount;
+      updateData.remainingAmount = 0;
     }
 
     const updated = await prisma.order.update({
       where: { id },
-      data: {
-        status,
-        ...(isMovingToPickedUp && isUnpaidOrder && paymentMethod ? { paymentMethod } : {}),
-      },
+      data: updateData,
       include: orderInclude,
     });
 
@@ -674,3 +714,4 @@ ordersRouter.patch(
 );
 
 export { ordersRouter };
+

@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CreditCard, Plus, ShoppingCart, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -186,6 +186,7 @@ export default function POS() {
   const [discount, setDiscount] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [amountPaid, setAmountPaid] = useState(0);
+  const [downPaymentAmount, setDownPaymentAmount] = useState(0);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const normalizedCustomerPhone = useMemo(() => normalizePhoneNumber(customerPhone), [customerPhone]);
@@ -200,6 +201,22 @@ export default function POS() {
     () => matchedCustomers.find((customer) => normalizePhoneNumber(customer.phone) === normalizedCustomerPhone),
     [matchedCustomers, normalizedCustomerPhone],
   );
+  const hasSearchedCustomerPhone = normalizedCustomerPhone.length >= 9;
+  const isReturningCustomer = Boolean(existingCustomer && existingCustomer.totalOrders > 0);
+
+  useEffect(() => {
+    if (!hasSearchedCustomerPhone) {
+      setCustomerName("");
+      return;
+    }
+
+    if (existingCustomer) {
+      setCustomerName(existingCustomer.name);
+      return;
+    }
+
+    setCustomerName("");
+  }, [hasSearchedCustomerPhone, existingCustomer]);
 
   const filteredProducts = useMemo(() => {
     let filtered = products.filter((item) => item.materialVariants.length > 0);
@@ -384,7 +401,10 @@ export default function POS() {
   const grandTotal = Math.max(cartTotal - discount, 0);
   const changeAmount = amountPaid - grandTotal;
   const formattedAmountPaid = amountPaid.toLocaleString("id-ID");
+  const formattedDownPayment = downPaymentAmount.toLocaleString("id-ID");
+  const remainingPiutangAmount = Math.max(grandTotal - downPaymentAmount, 0);
   const isCashUnderpaid = paymentMethod === "cash" && amountPaid < grandTotal;
+  const isPiutangDownPaymentInvalid = paymentMethod === "piutang" && grandTotal > 0 && downPaymentAmount >= grandTotal;
 
   const resetItemForm = () => {
     setItemMaterial("");
@@ -523,7 +543,9 @@ export default function POS() {
 
   const removeFromCart = (id: string) => setCart((prev) => prev.filter((item) => item.id !== id));
   const openPaymentDialog = () => {
-    setAmountPaid(grandTotal);
+    setPaymentMethod("cash");
+    setAmountPaid(0);
+    setDownPaymentAmount(0);
     setPaymentOpen(true);
   };
 
@@ -676,12 +698,16 @@ export default function POS() {
     if (!trimmedName || !normalizedPhone) return toast.error("Nama dan nomor telepon pelanggan wajib diisi");
     if (!/^0\d{8,14}$/.test(normalizedPhone)) return toast.error("Format nomor telepon tidak valid");
     if (isCashUnderpaid) return toast.error("Nominal bayar kurang dari total belanja");
+    if (paymentMethod === "piutang" && isPiutangDownPaymentInvalid) {
+      return toast.error("Untuk transaksi piutang, DP harus lebih kecil dari total belanja");
+    }
 
     try {
       await createOrder.mutateAsync({
         customerName: trimmedName,
         customerPhone: normalizedPhone,
         paymentMethod,
+        downPayment: paymentMethod === "piutang" ? downPaymentAmount : undefined,
         discount,
         tax: 0,
         notes: "",
@@ -728,6 +754,7 @@ export default function POS() {
       setCustomerName("");
       setCustomerPhone("");
       setAmountPaid(0);
+      setDownPaymentAmount(0);
       setPaymentOpen(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Gagal menyimpan transaksi");
@@ -1039,10 +1066,6 @@ export default function POS() {
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium text-foreground mb-1.5 block">Nama Pelanggan</label>
-              <Input value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="Nama pelanggan..." />
-            </div>
-            <div>
               <label className="text-sm font-medium text-foreground mb-1.5 block">No Telepon</label>
               <Input
                 value={customerPhone}
@@ -1051,11 +1074,17 @@ export default function POS() {
                 placeholder="08xxxxxxxxxx"
                 inputMode="numeric"
               />
-              {existingCustomer ? (
+              {hasSearchedCustomerPhone ? (
                 <div className="mt-2">
-                  <span className="badge-status bg-warning/10 text-warning">Pelanggan lama</span>
+                  <span className={`badge-status ${isReturningCustomer ? "bg-warning/10 text-warning" : "bg-primary/10 text-primary"}`}>
+                    {isReturningCustomer ? "Pelanggan lama" : "Pelanggan baru"}
+                  </span>
                 </div>
               ) : null}
+            </div>
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1.5 block">Nama Pelanggan</label>
+              <Input value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="Nama pelanggan..." />
             </div>
             <div>
               <label className="text-sm font-medium text-foreground mb-1.5 block">Metode Pembayaran</label>
@@ -1065,7 +1094,9 @@ export default function POS() {
                     key={method}
                     onClick={() => {
                       setPaymentMethod(method);
-                      if (method !== "cash") setAmountPaid(grandTotal);
+                      if (method === "cash") setAmountPaid(0);
+                      else setAmountPaid(grandTotal);
+                      if (method !== "piutang") setDownPaymentAmount(0);
                     }}
                     className={`p-3 rounded-lg border text-sm font-medium transition-all ${
                       paymentMethod === method ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-muted"
@@ -1092,26 +1123,57 @@ export default function POS() {
                 <span className="text-foreground">Total</span>
                 <span className="text-primary">{formatCurrency(grandTotal)}</span>
               </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Nominal Bayar</span>
-                <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground font-bold text-black">Rp</span>
-                  <Input
-                    type="text"
-                    inputMode="numeric"
-                    value={formattedAmountPaid}
-                    onChange={(e) => setAmountPaid(parseCurrencyInput(e.target.value))}
-                    className="h-8 w-36 text-right"
-                    disabled={paymentMethod !== "cash"}
-                  />
-                </div>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Kembalian</span>
-                <span className="font-semibold text-foreground">{formatCurrency(changeAmount)}</span>
-              </div>
+              {paymentMethod === "piutang" ? (
+                <>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Biaya DP</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground font-bold text-black">Rp</span>
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        value={formattedDownPayment}
+                        onChange={(e) => setDownPaymentAmount(parseCurrencyInput(e.target.value))}
+                        className="h-8 w-36 text-right"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Sisa Piutang</span>
+                    <span className="font-semibold text-destructive">{formatCurrency(remainingPiutangAmount)}</span>
+                  </div>
+                  {isPiutangDownPaymentInvalid ? (
+                    <p className="text-xs text-destructive">DP harus lebih kecil dari total belanja.</p>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Nominal Bayar</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground font-bold text-black">Rp</span>
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        value={formattedAmountPaid}
+                        onChange={(e) => setAmountPaid(parseCurrencyInput(e.target.value))}
+                        className="h-8 w-36 text-right"
+                        disabled={paymentMethod !== "cash"}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Kembalian</span>
+                    <span className="font-semibold text-foreground">{formatCurrency(changeAmount)}</span>
+                  </div>
+                </>
+              )}
             </div>
-            <Button onClick={handleCheckout} className="w-full h-12 text-base font-semibold" disabled={createOrder.isPending || isCashUnderpaid}>
+            <Button
+              onClick={handleCheckout}
+              className="w-full h-12 text-base font-semibold"
+              disabled={createOrder.isPending || isCashUnderpaid || isPiutangDownPaymentInvalid}
+            >
               {createOrder.isPending ? "Menyimpan..." : "Konfirmasi Pembayaran"}
             </Button>
           </div>
@@ -1120,3 +1182,4 @@ export default function POS() {
     </div>
   );
 }
+

@@ -217,6 +217,9 @@ export interface Order {
   itemTypes?: TransactionItemType[];
   status: OrderStatus;
   paymentMethod: PaymentMethod;
+  downPayment: number;
+  paidAmount: number;
+  remainingAmount: number;
   subtotal: number;
   discount: number;
   tax: number;
@@ -272,3 +275,4 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   qris: "QRIS",
   piutang: "Piutang",
 };
+

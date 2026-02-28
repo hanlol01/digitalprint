@@ -9,6 +9,7 @@ export type CreateOrderPayload = {
   customerName: string;
   customerPhone: string;
   paymentMethod: PaymentMethod;
+  downPayment?: number;
   discount?: number;
   tax?: number;
   notes?: string;
@@ -91,10 +92,11 @@ export const useCreateOrder = () => {
 export const useUpdateOrderStatus = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, status, paymentMethod }: { id: string; status: OrderStatus; paymentMethod?: PaymentMethod }) =>
-      patchData<Order, { status: OrderStatus; paymentMethod?: PaymentMethod }>(`/pesanan/${id}/status`, {
+    mutationFn: ({ id, status, paymentMethod, settlementAmount }: { id: string; status: OrderStatus; paymentMethod?: PaymentMethod; settlementAmount?: number }) =>
+      patchData<Order, { status: OrderStatus; paymentMethod?: PaymentMethod; settlementAmount?: number }>(`/pesanan/${id}/status`, {
         status,
         paymentMethod,
+        settlementAmount,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey });
@@ -103,3 +105,4 @@ export const useUpdateOrderStatus = () => {
     },
   });
 };
+
