@@ -41,6 +41,7 @@ const adjustSchema = z.object({
 
 const materialsRouter = Router();
 materialsRouter.use(authenticate);
+materialsRouter.use(authorizeRoles("admin", "management"));
 
 const serializeMaterial = (material: Prisma.MaterialGetPayload<object>) => ({
   ...material,
@@ -88,7 +89,7 @@ materialsRouter.get(
 materialsRouter.post(
   "/",
   authenticate,
-  authorizeRoles("owner", "admin", "operator"),
+  authorizeRoles("admin"),
   validateBody(createMaterialSchema),
   asyncHandler(async (req, res) => {
     const body = req.body as z.infer<typeof createMaterialSchema>;
@@ -110,7 +111,7 @@ materialsRouter.post(
 materialsRouter.patch(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin", "operator"),
+  authorizeRoles("admin"),
   validateBody(updateMaterialSchema),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
@@ -153,7 +154,7 @@ materialsRouter.patch(
 materialsRouter.delete(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
     const existing = await prisma.material.findFirst({ where: { id, deletedAt: null } });
@@ -172,7 +173,7 @@ materialsRouter.delete(
 materialsRouter.post(
   "/:id/restok",
   authenticate,
-  authorizeRoles("owner", "admin", "operator"),
+  authorizeRoles("admin"),
   validateBody(restockSchema),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
@@ -215,7 +216,7 @@ materialsRouter.post(
 materialsRouter.post(
   "/:id/penyesuaian-stok",
   authenticate,
-  authorizeRoles("owner", "admin", "operator"),
+  authorizeRoles("admin"),
   validateBody(adjustSchema),
   asyncHandler(async (req, res) => {
     const id = req.params.id;

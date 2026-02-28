@@ -5,7 +5,7 @@ export type OrderStatus = "menunggu_desain" | "proses_cetak" | "finishing" | "se
 
 export type PaymentMethod = "cash" | "transfer" | "qris" | "piutang";
 
-export type UserRole = "owner" | "admin" | "kasir" | "operator";
+export type UserRole = "management" | "admin" | "staff" | "operator";
 
 export interface ApiResponse<T> {
   success: boolean;

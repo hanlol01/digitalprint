@@ -120,6 +120,7 @@ const resolveOrderPaymentOnCreate = (paymentMethod: PaymentMethod, total: number
 
 ordersRouter.get(
   "/",
+  authorizeRoles("admin", "management", "operator"),
   asyncHandler(async (req, res) => {
     const page = Math.max(Number(req.query.page ?? 1), 1);
     const limit = Math.min(Math.max(Number(req.query.limit ?? 20), 1), 100);
@@ -168,6 +169,7 @@ ordersRouter.get(
 
 ordersRouter.get(
   "/ringkasan-status",
+  authorizeRoles("admin", "management", "operator"),
   asyncHandler(async (req, res) => {
     const itemTypeQuery = String(req.query.itemType ?? "").trim();
     const itemType = Object.values(TransactionItemType).includes(itemTypeQuery as TransactionItemType)
@@ -197,6 +199,7 @@ ordersRouter.get(
 
 ordersRouter.get(
   "/:id",
+  authorizeRoles("admin", "management", "operator"),
   asyncHandler(async (req, res) => {
     const order = await prisma.order.findFirst({
       where: { id: req.params.id, deletedAt: null },
@@ -214,7 +217,7 @@ ordersRouter.get(
 ordersRouter.post(
   "/",
   authenticate,
-  authorizeRoles("owner", "admin", "kasir"),
+  authorizeRoles("admin", "staff"),
   validateBody(createOrderSchema),
   asyncHandler(async (req, res) => {
     const body = req.body as z.infer<typeof createOrderSchema>;
@@ -659,7 +662,7 @@ ordersRouter.post(
 ordersRouter.patch(
   "/:id/status",
   authenticate,
-  authorizeRoles("owner", "admin", "kasir", "operator"),
+  authorizeRoles("admin"),
   validateBody(updateStatusSchema),
   asyncHandler(async (req, res) => {
     const id = req.params.id;

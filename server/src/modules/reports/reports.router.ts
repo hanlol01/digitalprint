@@ -8,7 +8,7 @@ import { authenticate, authorizeRoles } from "../../middlewares/auth";
 
 const reportsRouter = Router();
 reportsRouter.use(authenticate);
-reportsRouter.use(authorizeRoles("owner", "admin"));
+reportsRouter.use(authorizeRoles("admin", "management", "staff"));
 
 const parseItemTypeQuery = (value: string): TransactionItemType | undefined => {
   return Object.values(TransactionItemType).includes(value as TransactionItemType)

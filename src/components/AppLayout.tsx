@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { canAccessRoute, getRoleLabel } from '@/lib/rbac';
 
 const primaryNavItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -37,12 +38,16 @@ export default function AppLayout() {
   const [logoError, setLogoError] = useState(false);
   const location = useLocation();
   const isPathActive = (path: string) => location.pathname === path || location.pathname.startsWith(`${path}/`);
-  const isInMasterData = masterDataItems.some((item) => isPathActive(item.to));
-  const [masterDataOpen, setMasterDataOpen] = useState(isInMasterData);
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const userRole = user?.role ?? null;
+  const visiblePrimaryNavItems = primaryNavItems.filter((item) => canAccessRoute(userRole, item.to));
+  const visibleMasterDataItems = masterDataItems.filter((item) => canAccessRoute(userRole, item.to));
+  const visibleSecondaryNavItems = secondaryNavItems.filter((item) => canAccessRoute(userRole, item.to));
+  const isInMasterData = visibleMasterDataItems.some((item) => isPathActive(item.to));
+  const [masterDataOpen, setMasterDataOpen] = useState(isInMasterData);
   const isSidebarExpanded = mobileOpen || sidebarMode === 'open' || (sidebarMode === 'auto' && isSidebarHovered);
-  const navItems = [...primaryNavItems, ...masterDataItems, ...secondaryNavItems];
+  const navItems = [...visiblePrimaryNavItems, ...visibleMasterDataItems, ...visibleSecondaryNavItems];
 
   useEffect(() => {
     if (isInMasterData) setMasterDataOpen(true);
@@ -102,7 +107,7 @@ export default function AppLayout() {
 
         {/* Nav */}
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {primaryNavItems.map((item) => {
+          {visiblePrimaryNavItems.map((item) => {
             const isActive = isPathActive(item.to);
             return (
               <NavLink
@@ -122,57 +127,61 @@ export default function AppLayout() {
             );
           })}
 
-          <button
-            type="button"
-            onClick={() => {
-              if (!isSidebarExpanded) {
-                setSidebarMode('open');
-                setIsSidebarHovered(false);
-                setMasterDataOpen(true);
-                return;
-              }
-              setMasterDataOpen((prev) => !prev);
-            }}
-            className={`sidebar-item w-full ${
-              isInMasterData
-                ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-md'
-                : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
-            } ${isSidebarExpanded ? '' : 'justify-center px-0'}`}
-            title={isSidebarExpanded ? undefined : 'Master Data'}
-          >
-            <Database className="w-5 h-5 shrink-0" />
-            {isSidebarExpanded ? (
-              <>
-                <span className="animate-fade-in flex-1 text-left">Master Data</span>
-                {masterDataOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-              </>
-            ) : null}
-          </button>
+          {visibleMasterDataItems.length > 0 ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isSidebarExpanded) {
+                    setSidebarMode('open');
+                    setIsSidebarHovered(false);
+                    setMasterDataOpen(true);
+                    return;
+                  }
+                  setMasterDataOpen((prev) => !prev);
+                }}
+                className={`sidebar-item w-full ${
+                  isInMasterData
+                    ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-md'
+                    : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                } ${isSidebarExpanded ? '' : 'justify-center px-0'}`}
+                title={isSidebarExpanded ? undefined : 'Master Data'}
+              >
+                <Database className="w-5 h-5 shrink-0" />
+                {isSidebarExpanded ? (
+                  <>
+                    <span className="animate-fade-in flex-1 text-left">Master Data</span>
+                    {masterDataOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                  </>
+                ) : null}
+              </button>
 
-          {masterDataOpen && isSidebarExpanded && (
-            <div className="space-y-1 pl-3">
-              {masterDataItems.map((item) => {
-                const isActive = isPathActive(item.to);
-                return (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    onClick={() => setMobileOpen(false)}
-                    className={`sidebar-item ${
-                      isActive 
-                        ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-md' 
-                        : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
-                    }`}
-                  >
-                    <item.icon className="w-4 h-4 shrink-0" />
-                    <span>{item.label}</span>
-                  </NavLink>
-                );
-              })}
-            </div>
-          )}
+              {masterDataOpen && isSidebarExpanded && (
+                <div className="space-y-1 pl-3">
+                  {visibleMasterDataItems.map((item) => {
+                    const isActive = isPathActive(item.to);
+                    return (
+                      <NavLink
+                        key={item.to}
+                        to={item.to}
+                        onClick={() => setMobileOpen(false)}
+                        className={`sidebar-item ${
+                          isActive 
+                            ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-md' 
+                            : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                        }`}
+                      >
+                        <item.icon className="w-4 h-4 shrink-0" />
+                        <span>{item.label}</span>
+                      </NavLink>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          ) : null}
 
-          {secondaryNavItems.map((item) => {
+          {visibleSecondaryNavItems.map((item) => {
             const isActive = isPathActive(item.to);
             return (
               <NavLink
@@ -254,7 +263,7 @@ export default function AppLayout() {
             </div>
             <div className="hidden sm:block text-right">
               <p className="text-sm font-medium text-foreground leading-tight">{user?.username ?? "-"}</p>
-              <p className="text-[11px] text-muted-foreground uppercase">{user?.role ?? "-"}</p>
+              <p className="text-[11px] text-muted-foreground uppercase">{getRoleLabel(user?.role)}</p>
             </div>
             <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
               <span className="text-sm font-semibold text-primary">{initials}</span>

@@ -27,6 +27,7 @@ const updateDisplaySchema = createDisplaySchema.partial();
 
 const displaysRouter = Router();
 displaysRouter.use(authenticate);
+displaysRouter.use(authorizeRoles("admin", "management", "staff"));
 
 const includeDisplay = {
   product: true,
@@ -76,7 +77,7 @@ displaysRouter.get(
 displaysRouter.post(
   "/",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(createDisplaySchema),
   asyncHandler(async (req, res) => {
     const body = req.body as z.infer<typeof createDisplaySchema>;
@@ -106,7 +107,7 @@ displaysRouter.post(
 displaysRouter.patch(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(updateDisplaySchema),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
@@ -143,7 +144,7 @@ displaysRouter.patch(
 displaysRouter.delete(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
     const existing = await prisma.displayCatalog.findFirst({ where: { id, deletedAt: null } });

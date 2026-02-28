@@ -11,8 +11,10 @@ import { useCreateOrder } from "@/hooks/useOrders";
 import { useCustomers } from "@/hooks/useCustomers";
 import { useServices } from "@/hooks/useServices";
 import { useDisplays } from "@/hooks/useDisplays";
+import { useAuth } from "@/contexts/AuthContext";
 import { formatCurrency } from "@/lib/format";
-import { printReceipt, type ReceiptData } from "@/lib/printReceipt";
+import { openPrintWindow, printReceipt, type ReceiptData } from "@/lib/printReceipt";
+import { canCreateOrder, isGlobalReadOnlyRole } from "@/lib/rbac";
 import { PAYMENT_METHOD_LABELS, type CartItem, type DisplayCatalog, type MaterialVariant, type PaymentMethod, type Product, type ServiceCatalog, type TransactionItemType } from "@/types";
 import { toast } from "sonner";
 
@@ -77,8 +79,7 @@ const pricingUnitLabel = (unit: string) =>
     per_pcs: "/pcs",
   })[unit] || "";
 const NO_LAMINATION_FINISHING_CODE = "fns-009";
-const PRODUCT_FINISHING_UNSELECTED = "__unselected__";
-const PRODUCT_FINISHING_NONE = "__none__";
+const PRODUCT_VARIANT_UNSELECTED = "__unselected__";
 const DISPLAY_MATERIAL_NONE = "__none__";
 
 type ServiceGroupKey = "a3" | "m2";
@@ -98,12 +99,13 @@ type ProductMaterialOption = {
   materialName: string;
   baseVariant: MaterialVariant | null;
 };
-type ProductFinishingOption = {
-  finishingValue: string;
-  finishingId: string | null;
+type ProductVariantOption = {
+  variantId: string;
   finishingName: string;
   sellingPrice: number;
   unitName: string | null;
+  variantCode: string | null;
+  label: string;
 };
 
 const normalizeText = (value?: string | null): string => (value ?? "").trim().toLowerCase();
@@ -123,7 +125,11 @@ const getCartMaterialLabel = (item: CartItem): string => {
   return fallbackLabel(item.selectedDisplay?.material?.name, "Tanpa Bahan");
 };
 const getCartFinishingLabel = (item: CartItem): string => {
-  if (item.itemType === "produk") return fallbackLabel(item.selectedMaterial?.finishing?.name, "Tanpa Finishing");
+  if (item.itemType === "produk") {
+    const finishingName = fallbackLabel(item.selectedMaterial?.finishing?.name, "Tanpa Finishing");
+    const unitName = item.selectedMaterial?.unit?.name?.trim() || item.product.unit?.name?.trim() || "";
+    return `${finishingName}${unitName ? `/${unitName}` : ""}`;
+  }
   if (item.itemType === "jasa") return fallbackLabel(item.selectedService?.finishing?.name, "Tanpa Finishing");
   return fallbackLabel(item.selectedDisplay?.finishing?.name, "Tanpa Finishing");
 };
@@ -172,11 +178,14 @@ const resolveServiceGroupKey = (service: ServiceCatalog): ServiceGroupKey | null
 };
 
 export default function POS() {
+  const { user } = useAuth();
   const { data: categories = [] } = useCategories({ activeOnly: true });
   const { data: products = [] } = useProducts({ activeOnly: true });
   const { data: services = [] } = useServices({ activeOnly: true });
   const { data: displays = [] } = useDisplays({ activeOnly: true });
   const createOrder = useCreateOrder();
+  const canProcessTransaction = canCreateOrder(user?.role);
+  const isReadOnlyMode = isGlobalReadOnlyRole(user?.role);
 
   const [activeType, setActiveType] = useState<TransactionItemType>("produk");
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -193,7 +202,7 @@ export default function POS() {
   const [selectedDisplayFinishingId, setSelectedDisplayFinishingId] = useState("");
   const [selectedDisplay, setSelectedDisplay] = useState<DisplayCatalog | null>(null);
   const [itemMaterial, setItemMaterial] = useState("");
-  const [selectedProductFinishingId, setSelectedProductFinishingId] = useState(PRODUCT_FINISHING_UNSELECTED);
+  const [selectedProductVariantId, setSelectedProductVariantId] = useState(PRODUCT_VARIANT_UNSELECTED);
   const [itemQty, setItemQty] = useState(1);
   const [itemWidth, setItemWidth] = useState(1);
   const [itemHeight, setItemHeight] = useState(1);
@@ -249,39 +258,54 @@ export default function POS() {
     [productMaterialOptions, itemMaterial],
   );
 
-  const productFinishingOptions = useMemo(() => {
+  const productVariantOptions = useMemo(() => {
     if (!selectedProduct || !selectedProductMaterialOption) return [];
-    const map = new Map<string, ProductFinishingOption>();
-    selectedProduct.materialVariants
+    const baseOptions = selectedProduct.materialVariants
       .filter((variant) => variant.materialId === selectedProductMaterialOption.materialId)
-      .forEach((variant) => {
-        const finishingId = variant.finishingId ?? null;
-        const finishingValue = finishingId ?? PRODUCT_FINISHING_NONE;
-        if (!map.has(finishingValue)) {
-          map.set(finishingValue, {
-            finishingValue,
-            finishingId,
-            finishingName: variant.finishing?.name ?? "Tanpa Finishing",
-            sellingPrice: variant.sellingPrice,
-            unitName: variant.unit?.name ?? selectedProduct.unit?.name ?? null,
-          });
-        }
+      .map((variant) => ({
+        variantId: variant.id,
+        finishingName: variant.finishing?.name ?? "Tanpa Finishing",
+        sellingPrice: variant.sellingPrice,
+        unitName: variant.unit?.name ?? selectedProduct.unit?.name ?? null,
+        variantCode: variant.code ?? null,
+      }))
+      .sort((a, b) => {
+        const byFinishing = a.finishingName.localeCompare(b.finishingName, "id", { sensitivity: "base" });
+        if (byFinishing !== 0) return byFinishing;
+        const byUnit = (a.unitName ?? "").localeCompare(b.unitName ?? "", "id", { sensitivity: "base" });
+        if (byUnit !== 0) return byUnit;
+        if (a.sellingPrice !== b.sellingPrice) return a.sellingPrice - b.sellingPrice;
+        return (a.variantCode ?? "").localeCompare(b.variantCode ?? "", "en", { numeric: true, sensitivity: "base" });
       });
-    return [...map.values()].sort((a, b) => a.finishingName.localeCompare(b.finishingName, "id", { sensitivity: "base" }));
+
+    const baseLabelCounter = new Map<string, number>();
+    const buildBaseLabel = (option: Omit<ProductVariantOption, "label">): string =>
+      `${option.finishingName} - ${formatCurrency(option.sellingPrice)}${unitSuffixFromName(option.unitName)}`;
+    baseOptions.forEach((option) => {
+      const key = buildBaseLabel(option);
+      baseLabelCounter.set(key, (baseLabelCounter.get(key) ?? 0) + 1);
+    });
+
+    return baseOptions.map((option) => {
+      const baseLabel = buildBaseLabel(option);
+      const hasCollision = (baseLabelCounter.get(baseLabel) ?? 0) > 1;
+      const identity = option.variantCode?.trim() || option.variantId.slice(0, 8);
+      return {
+        ...option,
+        label: hasCollision ? `${baseLabel} (${identity})` : baseLabel,
+      };
+    });
   }, [selectedProduct, selectedProductMaterialOption]);
 
   const selectedProductVariant = useMemo(() => {
     if (!selectedProduct || !selectedProductMaterialOption) return null;
-    if (selectedProductFinishingId === PRODUCT_FINISHING_UNSELECTED) return null;
-    const selectedFinishingId = selectedProductFinishingId === PRODUCT_FINISHING_NONE ? null : selectedProductFinishingId;
+    if (selectedProductVariantId === PRODUCT_VARIANT_UNSELECTED) return null;
     return (
       selectedProduct.materialVariants.find(
-        (variant) =>
-          variant.materialId === selectedProductMaterialOption.materialId &&
-          (variant.finishingId ?? null) === selectedFinishingId,
+        (variant) => variant.id === selectedProductVariantId && variant.materialId === selectedProductMaterialOption.materialId,
       ) ?? null
     );
-  }, [selectedProduct, selectedProductMaterialOption, selectedProductFinishingId]);
+  }, [selectedProduct, selectedProductMaterialOption, selectedProductVariantId]);
 
   const serviceGroups = useMemo(() => {
     const grouped = new Map<ServiceGroupKey, ServiceCatalog[]>();
@@ -423,14 +447,22 @@ export default function POS() {
 
   const resetItemForm = () => {
     setItemMaterial("");
-    setSelectedProductFinishingId(PRODUCT_FINISHING_UNSELECTED);
+    setSelectedProductVariantId(PRODUCT_VARIANT_UNSELECTED);
     setItemQty(1);
     setItemWidth(1);
     setItemHeight(1);
     setItemNotes("");
   };
 
+  const showReadOnlyToast = () => {
+    toast.error("Role management hanya bisa melihat data POS (read-only)");
+  };
+
   const openAddProduct = (product: Product) => {
+    if (!canProcessTransaction) {
+      showReadOnlyToast();
+      return;
+    }
     const materialOptions = buildProductMaterialOptions(product);
     const initialMaterialOption = materialOptions[0] ?? null;
     const initialMaterialId = initialMaterialOption?.materialId ?? "";
@@ -445,7 +477,7 @@ export default function POS() {
     setSelectedDisplayFinishingId("");
     setSelectedDisplay(null);
     setItemMaterial(initialMaterialId);
-    setSelectedProductFinishingId(PRODUCT_FINISHING_UNSELECTED);
+    setSelectedProductVariantId(PRODUCT_VARIANT_UNSELECTED);
     setItemQty(initialQty);
     setItemWidth(1);
     setItemHeight(1);
@@ -454,6 +486,10 @@ export default function POS() {
   };
 
   const openAddServiceGroup = (group: ServiceGroup) => {
+    if (!canProcessTransaction) {
+      showReadOnlyToast();
+      return;
+    }
     setSelectedProduct(null);
     setSelectedServiceGroup(group);
     const firstOption = group.options[0] ?? null;
@@ -469,6 +505,10 @@ export default function POS() {
   };
 
   const openAddDisplayGroup = (group: DisplayGroup) => {
+    if (!canProcessTransaction) {
+      showReadOnlyToast();
+      return;
+    }
     setSelectedProduct(null);
     setSelectedServiceGroup(null);
     setSelectedService(null);
@@ -485,23 +525,20 @@ export default function POS() {
 
   const handleSelectProductMaterial = (materialId: string) => {
     setItemMaterial(materialId);
-    setSelectedProductFinishingId(PRODUCT_FINISHING_UNSELECTED);
+    setSelectedProductVariantId(PRODUCT_VARIANT_UNSELECTED);
     const materialOption = productMaterialOptions.find((option) => option.materialId === materialId) ?? null;
     setItemQty(normalizeMinimumOrder(materialOption?.baseVariant?.minimumOrder));
   };
 
-  const handleSelectProductFinishing = (finishingValue: string) => {
-    setSelectedProductFinishingId(finishingValue);
+  const handleSelectProductVariant = (variantId: string) => {
+    setSelectedProductVariantId(variantId);
     if (!selectedProduct || !selectedProductMaterialOption) {
       setItemQty(1);
       return;
     }
-    const selectedFinishingId = finishingValue === PRODUCT_FINISHING_NONE ? null : finishingValue;
     const matchedVariant =
       selectedProduct.materialVariants.find(
-        (variant) =>
-          variant.materialId === selectedProductMaterialOption.materialId &&
-          (variant.finishingId ?? null) === selectedFinishingId,
+        (variant) => variant.id === variantId && variant.materialId === selectedProductMaterialOption.materialId,
       ) ?? null;
     setItemQty(normalizeMinimumOrder(matchedVariant?.minimumOrder ?? selectedProductMaterialOption.baseVariant?.minimumOrder));
   };
@@ -556,8 +593,18 @@ export default function POS() {
     setSelectedDisplay(match);
   };
 
-  const removeFromCart = (id: string) => setCart((prev) => prev.filter((item) => item.id !== id));
+  const removeFromCart = (id: string) => {
+    if (!canProcessTransaction) {
+      showReadOnlyToast();
+      return;
+    }
+    setCart((prev) => prev.filter((item) => item.id !== id));
+  };
   const openPaymentDialog = () => {
+    if (!canProcessTransaction) {
+      showReadOnlyToast();
+      return;
+    }
     setPaymentMethod("cash");
     setAmountPaid(0);
     setDownPaymentAmount(0);
@@ -590,22 +637,26 @@ export default function POS() {
         : 1;
 
   const addToCart = () => {
+    if (!canProcessTransaction) {
+      showReadOnlyToast();
+      return;
+    }
     if (selectedProduct) {
       if (productMaterialOptions.length === 0) {
         toast.error("Produk tidak memiliki varian bahan aktif");
         return;
       }
-      if (productFinishingOptions.length === 0) {
-        toast.error("Finishing untuk bahan ini tidak tersedia");
+      if (productVariantOptions.length === 0) {
+        toast.error("Varian untuk bahan ini tidak tersedia");
         return;
       }
-      if (selectedProductFinishingId === PRODUCT_FINISHING_UNSELECTED) {
-        toast.error("Pilih finishing terlebih dahulu");
+      if (selectedProductVariantId === PRODUCT_VARIANT_UNSELECTED) {
+        toast.error("Pilih varian terlebih dahulu");
         return;
       }
       const material = selectedProductVariant;
       if (!material) {
-        toast.error("Kombinasi bahan dan finishing tidak ditemukan");
+        toast.error("Varian bahan/finishing/satuan tidak ditemukan");
         return;
       }
       if (productAreaMode && (!itemWidth || !itemHeight)) {
@@ -707,6 +758,10 @@ export default function POS() {
   };
 
   const handleCheckout = async () => {
+    if (!canProcessTransaction) {
+      showReadOnlyToast();
+      return;
+    }
     if (cart.length === 0) return;
     const normalizedPhone = normalizedCustomerPhone;
     const trimmedName = customerName.trim();
@@ -717,6 +772,7 @@ export default function POS() {
       return toast.error("Untuk transaksi piutang, DP harus lebih kecil dari total belanja");
     }
 
+    let preOpenedPrintWindow: Window | null = null;
     try {
       // Simpan snapshot data nota sebelum state di-reset.
       const receiptItems = cart.map((item) => ({
@@ -748,6 +804,7 @@ export default function POS() {
         remainingDebt: paymentMethod === "piutang" ? remainingPiutangAmount : undefined,
       };
 
+      preOpenedPrintWindow = openPrintWindow();
       const result = await createOrder.mutateAsync({
         customerName: trimmedName,
         customerPhone: normalizedPhone,
@@ -805,7 +862,7 @@ export default function POS() {
         ...receiptSnapshot,
       };
 
-      printReceipt(receiptData);
+      printReceipt(receiptData, preOpenedPrintWindow);
 
       // Reset state setelah cetak.
       toast.success("Transaksi berhasil disimpan");
@@ -817,6 +874,7 @@ export default function POS() {
       setDownPaymentAmount(0);
       setPaymentOpen(false);
     } catch (error) {
+      preOpenedPrintWindow?.close();
       toast.error(error instanceof Error ? error.message : "Gagal menyimpan transaksi");
     }
   };
@@ -824,6 +882,11 @@ export default function POS() {
   return (
     <div className="flex flex-col lg:flex-row gap-4 h-[calc(100vh-8rem)] animate-fade-in">
       <div className="flex-1 flex flex-col min-h-0 min-w-0">
+        {isReadOnlyMode ? (
+          <div className="mb-3 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+            Mode management: halaman POS hanya untuk melihat data.
+          </div>
+        ) : null}
         <div className="grid grid-cols-3 gap-2 mb-3">
           {(["produk", "jasa", "display"] as TransactionItemType[]).map((type) => (
             <button
@@ -940,13 +1003,19 @@ export default function POS() {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground shrink-0">Diskon</span>
-            <Input type="number" value={discount} onChange={(e) => setDiscount(Number(e.target.value))} className="h-8 text-sm text-right" />
+            <Input
+              type="number"
+              value={discount}
+              onChange={(e) => setDiscount(Number(e.target.value))}
+              className="h-8 text-sm text-right"
+              disabled={!canProcessTransaction}
+            />
           </div>
           <div className="flex justify-between text-lg font-bold pt-1">
             <span className="text-foreground">Total</span>
             <span className="text-primary">{formatCurrency(grandTotal)}</span>
           </div>
-          <Button className="w-full h-12 text-base font-semibold" disabled={cart.length === 0} onClick={openPaymentDialog}>
+          <Button className="w-full h-12 text-base font-semibold" disabled={cart.length === 0 || !canProcessTransaction} onClick={openPaymentDialog}>
             <CreditCard className="w-5 h-5 mr-2" />
             Bayar Sekarang
           </Button>
@@ -1059,18 +1128,17 @@ export default function POS() {
                   <div>
                     <label className="text-sm font-medium text-foreground mb-1.5 block">Tambah Finishing</label>
                     <Select
-                      value={selectedProductFinishingId === PRODUCT_FINISHING_UNSELECTED ? undefined : selectedProductFinishingId}
-                      onValueChange={handleSelectProductFinishing}
-                      disabled={productFinishingOptions.length === 0}
+                      value={selectedProductVariantId === PRODUCT_VARIANT_UNSELECTED ? undefined : selectedProductVariantId}
+                      onValueChange={handleSelectProductVariant}
+                      disabled={productVariantOptions.length === 0}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Pilih finishing" />
+                        <SelectValue placeholder="Pilih varian finishing/satuan" />
                       </SelectTrigger>
-                        <SelectContent>
-                          {productFinishingOptions.map((option) => (
-                          <SelectItem key={option.finishingValue} value={option.finishingValue}>
-                            {option.finishingName} - {formatCurrency(option.sellingPrice)}
-                            {unitSuffixFromName(option.unitName)}
+                      <SelectContent>
+                        {productVariantOptions.map((option) => (
+                          <SelectItem key={option.variantId} value={option.variantId}>
+                            {option.label}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -1115,7 +1183,7 @@ export default function POS() {
                 </div>
               </div>
 
-              <Button onClick={addToCart} className="w-full h-11">
+              <Button onClick={addToCart} className="w-full h-11" disabled={!canProcessTransaction}>
                 <Plus className="w-4 h-4 mr-2" /> Tambah ke Keranjang
               </Button>
             </div>
@@ -1236,7 +1304,7 @@ export default function POS() {
             <Button
               onClick={handleCheckout}
               className="w-full h-12 text-base font-semibold"
-              disabled={createOrder.isPending || isCashUnderpaid || isPiutangDownPaymentInvalid}
+              disabled={!canProcessTransaction || createOrder.isPending || isCashUnderpaid || isPiutangDownPaymentInvalid}
             >
               {createOrder.isPending ? "Menyimpan..." : "Konfirmasi Pembayaran"}
             </Button>

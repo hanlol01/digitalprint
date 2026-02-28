@@ -1,11 +1,14 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import { Eye, Filter, Search, User, Phone, Calendar, Clock, CreditCard, Wallet, Package, FileText, ShoppingBag, Trash2, CheckCircle2, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { Eye, Filter, Search, User, Phone, Calendar, Clock, CreditCard, Wallet, Package, FileText, ShoppingBag, Trash2, CheckCircle2, ArrowUpDown, ArrowUp, ArrowDown, Printer } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useOrders, useUpdateOrderStatus } from "@/hooks/useOrders";
+import { useAuth } from "@/contexts/AuthContext";
 import { formatCurrency } from "@/lib/format";
+import { openPrintWindow, printReceipt, type ReceiptData } from "@/lib/printReceipt";
+import { canUpdateOrderStatus, isOrdersReadOnlyRole } from "@/lib/rbac";
 import { ORDER_STATUS_CONFIG, PAYMENT_METHOD_LABELS, type Order, type OrderStatus, type PaymentMethod, type TransactionItemType } from "@/types";
 import { toast } from "sonner";
 
@@ -47,7 +50,7 @@ const splitMaterialFinishing = (value?: string | null): { material: string; fini
 };
 const getOrderItemMaterialLabel = (item: Order["items"][number]): string => {
   if (item.itemType === "produk") {
-    return fallbackText(item.itemLabel ?? item.variantName, "-");
+    return fallbackText(splitMaterialFinishing(item.itemLabel ?? item.variantName).material, "-");
   }
   if (item.itemType === "jasa") {
     return fallbackText(splitMaterialFinishing(item.variantName ?? item.itemLabel).material, "-");
@@ -59,10 +62,88 @@ const getOrderItemMaterialLabel = (item: Order["items"][number]): string => {
 };
 const getOrderItemFinishingLabel = (item: Order["items"][number]): string => {
   if (item.itemType === "produk") {
-    return item.finishing ? "Dengan Finishing" : "Tanpa Finishing";
+    const parsedFinishing = splitMaterialFinishing(item.variantName ?? item.itemLabel).finishing;
+    const finishingName = parsedFinishing || (item.finishing ? "Dengan Finishing" : "Tanpa Finishing");
+    const unitName = fallbackText(item.unitLabel, "");
+    return `${finishingName}${unitName ? `/${unitName}` : ""}`;
   }
   const parsedFinishing = splitMaterialFinishing(item.variantName).finishing;
   return fallbackText(parsedFinishing, "Tanpa Finishing");
+};
+const toPositiveNumberOrUndefined = (value: number | null | undefined): number | undefined => {
+  if (typeof value !== "number") return undefined;
+  return value > 0 ? value : undefined;
+};
+const buildSettlementReceiptData = (order: Order, method: PaymentMethod, paidAmount: number): ReceiptData => ({
+  orderNumber: order.orderNumber,
+  date: new Date(),
+  cashierName: "Admin",
+  customerName: order.customerName,
+  customerPhone: order.customerPhone,
+  items: order.items.map((item, index) => ({
+    name: fallbackText(item.productName, `Item ${index + 1}`),
+    itemType: item.itemType,
+    material: getOrderItemMaterialLabel(item),
+    finishing: getOrderItemFinishingLabel(item),
+    quantity: Number(item.quantity) || 1,
+    width: toPositiveNumberOrUndefined(item.width),
+    height: toPositiveNumberOrUndefined(item.height),
+    subtotal: Number(item.subtotal) || 0,
+  })),
+  subtotal: Number(order.subtotal) || Number(order.total) || 0,
+  discount: Number(order.discount) || 0,
+  grandTotal: Number(order.total) || 0,
+  paymentMethod: method,
+  amountPaid: Number(paidAmount) || 0,
+  changeAmount: 0,
+  remainingDebt: 0,
+});
+const getDetailReceiptPaymentMethod = (order: Order): PaymentMethod => (getRemainingAmount(order) > 0 ? "piutang" : order.paymentMethod);
+const getDetailReceiptPaidAmount = (order: Order): number => {
+  const remaining = getRemainingAmount(order);
+  if (remaining > 0 && order.paymentMethod === "piutang") {
+    return Number(order.downPayment) > 0 ? Number(order.downPayment) : Number(order.paidAmount) || 0;
+  }
+  return Number(order.paidAmount) || 0;
+};
+const getDetailReceiptButtonLabel = (order: Order): string => {
+  const remaining = getRemainingAmount(order);
+  if (remaining > 0) {
+    if (order.paymentMethod === "piutang") {
+      return Number(order.downPayment) > 0 ? "Print Nota DP" : "Print Nota Piutang";
+    }
+    return "Print Nota Sementara";
+  }
+  return order.status === "sudah_diambil" ? "Print Nota Lunas" : "Print Nota Pembayaran";
+};
+const buildDetailReceiptData = (order: Order): ReceiptData => {
+  const remaining = getRemainingAmount(order);
+  const paymentMethod = getDetailReceiptPaymentMethod(order);
+  const paidAmount = getDetailReceiptPaidAmount(order);
+  return {
+    orderNumber: order.orderNumber,
+    date: new Date(),
+    cashierName: "Admin",
+    customerName: order.customerName,
+    customerPhone: order.customerPhone,
+    items: order.items.map((item, index) => ({
+      name: fallbackText(item.productName, `Item ${index + 1}`),
+      itemType: item.itemType,
+      material: getOrderItemMaterialLabel(item),
+      finishing: getOrderItemFinishingLabel(item),
+      quantity: Number(item.quantity) || 1,
+      width: toPositiveNumberOrUndefined(item.width),
+      height: toPositiveNumberOrUndefined(item.height),
+      subtotal: Number(item.subtotal) || 0,
+    })),
+    subtotal: Number(order.subtotal) || Number(order.total) || 0,
+    discount: Number(order.discount) || 0,
+    grandTotal: Number(order.total) || 0,
+    paymentMethod,
+    amountPaid: paidAmount,
+    changeAmount: paymentMethod === "cash" && remaining === 0 ? 0 : undefined,
+    remainingDebt: remaining > 0 ? remaining : undefined,
+  };
 };
 const formatDateLabel = (value?: string | null): string => {
   if (!value) return "-";
@@ -104,6 +185,7 @@ const getOrderDate = (order: Order): number => {
 };
 
 export default function Orders() {
+  const { user } = useAuth();
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [filterPayment, setFilterPayment] = useState<PaymentFilter>("all");
   const [filterItemType, setFilterItemType] = useState<"all" | TransactionItemType>("all");
@@ -115,6 +197,9 @@ export default function Orders() {
   const [settlementOrder, setSettlementOrder] = useState<Order | null>(null);
   const [settlementMethod, setSettlementMethod] = useState<PaymentMethod>("cash");
   const [settlementAmount, setSettlementAmount] = useState(0);
+  const canEditOrderFlow = canUpdateOrderStatus(user?.role);
+  const canDeleteOrder = user?.role === "admin";
+  const isOrderReadOnly = isOrdersReadOnlyRole(user?.role);
 
   const { data: orders = [], isLoading } = useOrders({ search, status: filterStatus, itemType: filterItemType });
   const updateStatus = useUpdateOrderStatus();
@@ -172,17 +257,28 @@ export default function Orders() {
     return result;
   }, [filteredOrders]);
 
-  const handleUpdateStatus = async (orderId: string, newStatus: OrderStatus, paymentMethod?: PaymentMethod, settlementAmountValue?: number) => {
+  const handleUpdateStatus = async (
+    orderId: string,
+    newStatus: OrderStatus,
+    paymentMethod?: PaymentMethod,
+    settlementAmountValue?: number,
+  ): Promise<Order | null> => {
     try {
       const updated = await updateStatus.mutateAsync({ id: orderId, status: newStatus, paymentMethod, settlementAmount: settlementAmountValue });
       setSelectedOrder(updated);
       toast.success(`Status diperbarui ke "${ORDER_STATUS_CONFIG[newStatus].label}"`);
+      return updated;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Gagal memperbarui status");
+      return null;
     }
   };
 
   const handleStatusClick = async (order: Order, step: OrderStatus) => {
+    if (!canEditOrderFlow) {
+      toast.error("Role Anda hanya dapat melihat detail order");
+      return;
+    }
     const isNeedSettlement = step === "sudah_diambil" && getPaymentStatus(order) === "belum_lunas";
     if (isNeedSettlement) {
       setSettlementMethod("cash");
@@ -196,10 +292,24 @@ export default function Orders() {
   };
 
   const handleConfirmSettlement = async () => {
+    if (!canEditOrderFlow) {
+      toast.error("Role Anda hanya dapat melihat detail order");
+      return;
+    }
     if (!settlementOrder) return;
     if (isSettlementInvalid) return toast.error("Nominal pelunasan harus sama dengan sisa pembayaran");
 
-    await handleUpdateStatus(settlementOrder.id, "sudah_diambil", settlementMethod, settlementAmount);
+    const preOpenedPrintWindow = openPrintWindow();
+    const currentOrder = settlementOrder;
+    const paidAmount = settlementAmount;
+    const method = settlementMethod;
+    const updated = await handleUpdateStatus(currentOrder.id, "sudah_diambil", method, paidAmount);
+    if (!updated) {
+      preOpenedPrintWindow?.close();
+      return;
+    }
+
+    printReceipt(buildSettlementReceiptData(updated, method, paidAmount), preOpenedPrintWindow);
     setSettlementOpen(false);
     setSettlementOrder(null);
     setSettlementAmount(0);
@@ -207,12 +317,25 @@ export default function Orders() {
 
   const handleDeleteOrder = (e: React.MouseEvent, order: Order) => {
     e.stopPropagation();
+    if (!canDeleteOrder) {
+      toast.error("Role Anda tidak memiliki izin menghapus order");
+      return;
+    }
     // TODO: Implement delete logic with your API/hook
     toast.success(`Order ${order.orderNumber} dihapus`);
+  };
+  const handlePrintDetailReceipt = (order: Order) => {
+    const preOpenedPrintWindow = openPrintWindow();
+    printReceipt(buildDetailReceiptData(order), preOpenedPrintWindow);
   };
 
   return (
     <div className="space-y-4 animate-fade-in">
+      {isOrderReadOnly ? (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+          Mode baca: role Anda tidak dapat mengubah status atau melakukan pelunasan.
+        </div>
+      ) : null}
       <div className="flex flex-col sm:flex-row gap-1">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -420,15 +543,17 @@ export default function Orders() {
                           >
                             <Eye className="w-4 h-4" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                            onClick={(e) => handleDeleteOrder(e, order)}
-                            data-testid={`order-delete-${order.id}`}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {canDeleteOrder ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                              onClick={(e) => handleDeleteOrder(e, order)}
+                              data-testid={`order-delete-${order.id}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -486,21 +611,34 @@ export default function Orders() {
                 {/* Header */}
                 <div className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent px-6 pt-6 pb-4 border-b border-border/50">
                   <DialogHeader className="space-y-1">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-3">
                       <DialogTitle className="text-lg font-bold text-foreground tracking-tight" data-testid="detail-order-title">
                         {selectedOrder.orderNumber}
                       </DialogTitle>
-                      <span
-                        className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-full ${
-                          isPaid
-                            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400"
-                            : "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400"
-                        }`}
-                        data-testid="detail-payment-status-badge"
-                      >
-                        <span className={`w-1.5 h-1.5 rounded-full ${isPaid ? "bg-emerald-500" : "bg-red-500"}`} />
-                        {isPaid ? "Lunas" : "Belum Lunas"}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-8 px-3 text-xs font-semibold"
+                          onClick={() => handlePrintDetailReceipt(selectedOrder)}
+                          data-testid="detail-print-receipt-btn"
+                        >
+                          <Printer className="w-3.5 h-3.5 mr-1.5" />
+                          {getDetailReceiptButtonLabel(selectedOrder)}
+                        </Button>
+                        <span
+                          className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-full ${
+                            isPaid
+                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400"
+                              : "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400"
+                          }`}
+                          data-testid="detail-payment-status-badge"
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${isPaid ? "bg-emerald-500" : "bg-red-500"}`} />
+                          {isPaid ? "Lunas" : "Belum Lunas"}
+                        </span>
+                      </div>
                     </div>
                     <p className="text-xs text-muted-foreground">Detail informasi pesanan</p>
                   </DialogHeader>
@@ -567,7 +705,7 @@ export default function Orders() {
                               <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                             </div>
                             <div className="min-w-0">
-                              <p className="text-[11px] text-muted-foreground font-medium">Tanggal Pesanan Selesai</p>
+                              <p className="text-[11px] text-muted-foreground font-medium">Update Transaksi Terakhir</p>
                               <p className="text-sm font-semibold text-foreground" data-testid="detail-completed-date">{completedDate}</p>
                             </div>
                           </div>
@@ -709,12 +847,15 @@ export default function Orders() {
                               <div key={step} className="flex-1 min-w-0 flex flex-col items-center gap-1.5">
                                 <button
                                   onClick={() => handleStatusClick(selectedOrder, step)}
+                                  disabled={!canEditOrderFlow}
                                   className={`w-full h-2.5 rounded-full transition-all duration-300 ${
                                     isCompleted
                                       ? isCurrent
                                         ? "bg-primary shadow-[0_0_8px_rgba(59,130,246,0.4)]"
                                         : "bg-primary/70"
-                                      : "bg-muted hover:bg-muted-foreground/20"
+                                      : canEditOrderFlow
+                                        ? "bg-muted hover:bg-muted-foreground/20"
+                                        : "bg-muted"
                                   }`}
                                   data-testid={`status-step-${step}`}
                                 />
@@ -840,7 +981,7 @@ export default function Orders() {
                 className="flex-1 h-11 rounded-xl font-semibold shadow-md shadow-primary/25"
                 data-testid="settlement-confirm-btn"
                 onClick={handleConfirmSettlement}
-                disabled={updateStatus.isPending || isSettlementInvalid}
+                disabled={!canEditOrderFlow || updateStatus.isPending || isSettlementInvalid}
               >
                 {updateStatus.isPending ? "Menyimpan..." : "Lunasi & Sudah Diambil"}
               </Button>
@@ -851,4 +992,3 @@ export default function Orders() {
     </div>
   );
 }
-

@@ -13,7 +13,9 @@ import { useCategories } from "@/hooks/useCategories";
 import { useCreateProduct, useDeleteProduct, useProducts, useUpdateProduct } from "@/hooks/useProducts";
 import { useMaterials } from "@/hooks/useMaterials";
 import { useFinishings, useUnits } from "@/hooks/useMasters";
+import { useAuth } from "@/contexts/AuthContext";
 import { formatCurrency } from "@/lib/format";
+import { canMutateMasterData } from "@/lib/rbac";
 import { type MaterialVariant, type PricingUnit, type Product } from "@/types";
 import { toast } from "sonner";
 
@@ -80,6 +82,34 @@ const ensureUniqueVariantCode = (seed: string, existingVariants: MaterialVariant
   return `${base}-${idx}`;
 };
 
+const buildVariantCombinationKey = (
+  variant: Pick<MaterialVariant, "materialId" | "finishingId" | "unitId">,
+  defaultUnitId?: string | null,
+): string => {
+  const resolvedUnitId = variant.unitId ?? defaultUnitId ?? "none";
+  return `${variant.materialId}:${variant.finishingId ?? "none"}:${resolvedUnitId}`;
+};
+
+const getDuplicateVariantIds = (variants: MaterialVariant[], defaultUnitId?: string | null): Set<string> => {
+  const bucket = new Map<string, string[]>();
+  variants.forEach((variant) => {
+    const key = buildVariantCombinationKey(variant, defaultUnitId);
+    const ids = bucket.get(key);
+    if (ids) {
+      ids.push(variant.id);
+      return;
+    }
+    bucket.set(key, [variant.id]);
+  });
+
+  const duplicateIds = new Set<string>();
+  bucket.forEach((ids) => {
+    if (ids.length < 2) return;
+    ids.forEach((id) => duplicateIds.add(id));
+  });
+  return duplicateIds;
+};
+
 const compareByCodeAsc = <T extends { code?: string | null; name?: string }>(a: T, b: T): number => {
   const codeA = (a.code ?? "").trim();
   const codeB = (b.code ?? "").trim();
@@ -91,6 +121,18 @@ const compareByCodeAsc = <T extends { code?: string | null; name?: string }>(a: 
   if (codeB) return 1;
 
   return (a.name ?? "").localeCompare(b.name ?? "", "id", { sensitivity: "base" });
+};
+
+const getVariantUnitSummary = (product: Product): string => {
+  const unitNames = [
+    ...new Set(product.materialVariants.map((variant) => variant.unit?.name?.trim()).filter((name): name is string => Boolean(name))),
+  ].sort((a, b) => a.localeCompare(b, "id", { sensitivity: "base" }));
+
+  if (unitNames.length === 0) return product.unit?.name?.trim() || "-";
+  if (unitNames.length <= 3) return unitNames.join(", ");
+
+  const preview = unitNames.slice(0, 2).join(", ");
+  return `${preview}, +${unitNames.length - 2} lainnya (${unitNames.length} jenis)`;
 };
 
 const emptyProduct: Omit<Product, "id"> = {
@@ -110,6 +152,7 @@ const emptyProduct: Omit<Product, "id"> = {
 };
 
 export default function Products() {
+  const { user } = useAuth();
   const [search, setSearch] = useState("");
   const [selectedCat, setSelectedCat] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -135,6 +178,7 @@ export default function Products() {
   const createProduct = useCreateProduct();
   const updateProduct = useUpdateProduct();
   const deleteProduct = useDeleteProduct();
+  const canMutate = canMutateMasterData(user?.role);
 
   const filtered = useMemo(() => {
     const result = products.filter((product) => {
@@ -152,6 +196,10 @@ export default function Products() {
 
   const selectedMaterialForVariant = materials.find((material) => material.id === newVariantMaterialId);
   const selectedFinishingForVariant = finishings.find((finishing) => finishing.id === newVariantFinishingId);
+  const duplicateVariantIds = useMemo(
+    () => getDuplicateVariantIds(form.materialVariants, form.unitId),
+    [form.materialVariants, form.unitId],
+  );
 
   const variantMaterialOptions = useMemo(() => {
     const map = new Map<string, string>();
@@ -171,6 +219,10 @@ export default function Products() {
   };
 
   const openCreate = () => {
+    if (!canMutate) {
+      toast.error("Role management hanya bisa melihat data");
+      return;
+    }
     const defaultCategoryId = categories[0]?.id ?? "";
     const defaultUnitId = units[0]?.id ?? null;
     setEditingProduct(null);
@@ -180,6 +232,10 @@ export default function Products() {
   };
 
   const openEdit = (product: Product) => {
+    if (!canMutate) {
+      toast.error("Role management hanya bisa melihat data");
+      return;
+    }
     setEditingProduct(product);
     setForm({
       code: product.code ?? "",
@@ -313,6 +369,10 @@ export default function Products() {
   };
 
   const handleSave = async () => {
+    if (!canMutate) {
+      toast.error("Role management hanya bisa melihat data");
+      return;
+    }
     if (!form.code?.trim()) {
       toast.error("Kode produk wajib diisi");
       return;
@@ -352,14 +412,10 @@ export default function Products() {
       toast.error("Harga jual varian tidak valid");
       return;
     }
-    const variantKeySet = new Set<string>();
-    for (const variant of normalizedVariants) {
-      const key = `${variant.materialId}:${variant.finishingId ?? "none"}`;
-      if (variantKeySet.has(key)) {
-        toast.error("Terdapat kombinasi bahan + finishing yang duplikat");
-        return;
-      }
-      variantKeySet.add(key);
+    const duplicateIds = getDuplicateVariantIds(normalizedVariants, form.unitId);
+    if (duplicateIds.size > 0) {
+      toast.error("Terdapat kombinasi bahan + finishing + satuan varian yang duplikat");
+      return;
     }
 
     const payload = {
@@ -406,6 +462,10 @@ export default function Products() {
   };
 
   const handleDelete = async () => {
+    if (!canMutate) {
+      toast.error("Role management hanya bisa melihat data");
+      return;
+    }
     if (!deletingProduct) return;
     try {
       await deleteProduct.mutateAsync(deletingProduct.id);
@@ -419,14 +479,21 @@ export default function Products() {
 
   return (
     <div className="space-y-4 animate-fade-in">
+      {!canMutate ? (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+          Mode baca: role management tidak dapat menambah, mengubah, atau menghapus produk.
+        </div>
+      ) : null}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input placeholder="Cari produk..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 bg-card" />
         </div>
-        <Button onClick={openCreate} className="gap-2">
-          <Plus className="w-4 h-4" /> Tambah Produk
-        </Button>
+        {canMutate ? (
+          <Button onClick={openCreate} className="gap-2">
+            <Plus className="w-4 h-4" /> Tambah Produk
+          </Button>
+        ) : null}
       </div>
 
       <div className="flex gap-2 overflow-x-auto pb-1">
@@ -475,22 +542,24 @@ export default function Products() {
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(product)}>
-                      <Edit className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-destructive hover:text-destructive"
-                      onClick={() => {
-                        setDeletingProduct(product);
-                        setDeleteDialogOpen(true);
-                      }}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
+                  {canMutate ? (
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(product)}>
+                        <Edit className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive hover:text-destructive"
+                        onClick={() => {
+                          setDeletingProduct(product);
+                          setDeleteDialogOpen(true);
+                        }}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
                 {product.hasCustomSize && (
                   <span className="badge-status bg-info/10 text-info mb-2 inline-block">
@@ -513,7 +582,7 @@ export default function Products() {
                 {product.finishingCost > 0 && (
                   <p className="text-xs text-muted-foreground mt-2">Finishing: +{formatCurrency(product.finishingCost)}</p>
                 )}
-                <p className="text-xs text-muted-foreground mt-1">Satuan: {product.unit?.name || "-"}</p>
+                <p className="text-xs text-muted-foreground mt-1">Satuan varian: {getVariantUnitSummary(product)}</p>
                 <p className="text-xs text-muted-foreground mt-1">Estimasi: {product.estimatedMinutes} menit</p>
               </div>
             );
@@ -679,128 +748,147 @@ export default function Products() {
               <p className="text-xs text-muted-foreground">
                 Tambahkan bahan dasar terlebih dahulu, lalu gunakan opsi tambah finishing untuk membuat kombinasi varian.
               </p>
+              {duplicateVariantIds.size > 0 && (
+                <p className="text-xs font-medium text-destructive">
+                  Terdapat kombinasi bahan + finishing + satuan varian duplikat. Baris yang bermasalah sudah ditandai merah.
+                </p>
+              )}
               <div className="space-y-1.5">
-                {form.materialVariants.map((variant) => (
-                  <div key={variant.id} className="space-y-3 text-sm bg-muted/30 rounded px-3 py-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="text-foreground font-medium">{getVariantMaterialName(variant)}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Finishing: {variant.finishing?.name ?? "-"}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          Modal: {formatCurrency(variant.costPrice)} | Jual: {formatCurrency(variant.sellingPrice)}
-                        </p>
+                {form.materialVariants.map((variant) => {
+                  const isDuplicateVariant = duplicateVariantIds.has(variant.id);
+                  return (
+                    <div
+                      key={variant.id}
+                      className={cn(
+                        "space-y-3 text-sm rounded px-3 py-3 border",
+                        isDuplicateVariant ? "border-destructive/60 bg-destructive/5" : "bg-muted/30 border-border/40",
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-foreground font-medium">{getVariantMaterialName(variant)}</p>
+                          <p className="text-xs text-muted-foreground">
+                            Finishing: {variant.finishing?.name ?? "-"}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Modal: {formatCurrency(variant.costPrice)} | Jual: {formatCurrency(variant.sellingPrice)}
+                          </p>
+                          {isDuplicateVariant && (
+                            <p className="text-xs text-destructive font-medium mt-1">
+                              Kombinasi bahan + finishing + satuan varian ini duplikat.
+                            </p>
+                          )}
+                        </div>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => removeVariant(variant.id)}>
+                          <X className="w-3 h-3" />
+                        </Button>
                       </div>
-                      <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => removeVariant(variant.id)}>
-                        <X className="w-3 h-3" />
-                      </Button>
-                    </div>
 
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      <div className="space-y-1">
-                        <Label className="text-xs">Satuan Varian</Label>
-                        <Select
-                          value={variant.unitId ?? "default"}
-                          onValueChange={(value) =>
-                            updateVariant(variant.id, (current) => ({
-                              ...current,
-                              unitId: value === "default" ? form.unitId ?? null : value,
-                            }))
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="default">Ikuti Produk</SelectItem>
-                            {units.map((unit) => (
-                              <SelectItem key={unit.id} value={unit.id}>
-                                {unit.name ?? unit.code}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">Finishing</Label>
-                        <Select
-                          value={variant.finishingId ?? "none"}
-                          onValueChange={(value) =>
-                            updateVariant(variant.id, (current) => {
-                              const selectedFinishing = value === "none" ? null : finishings.find((item) => item.id === value) ?? null;
-                              const nextCode = ensureUniqueVariantCode(
-                                buildVariantCodeSeed(
-                                  form.code,
-                                  current.material?.code ?? getVariantMaterialName(current),
-                                  selectedFinishing?.code ?? selectedFinishing?.name ?? null,
-                                ),
-                                form.materialVariants,
-                                current.id,
-                              );
-                              return {
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Satuan Varian</Label>
+                          <Select
+                            value={variant.unitId ?? "default"}
+                            onValueChange={(value) =>
+                              updateVariant(variant.id, (current) => ({
                                 ...current,
-                                code: nextCode,
-                                finishingId: selectedFinishing?.id ?? null,
-                                finishing: selectedFinishing,
-                                name: buildVariantName(getVariantMaterialName(current), selectedFinishing?.name),
-                              };
-                            })
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">-</SelectItem>
-                            {finishings.map((finishing) => (
-                              <SelectItem key={finishing.id} value={finishing.id}>
-                                {finishing.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
+                                unitId: value === "default" ? form.unitId ?? null : value,
+                              }))
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="default">Ikuti Produk</SelectItem>
+                              {units.map((unit) => (
+                                <SelectItem key={unit.id} value={unit.id}>
+                                  {unit.name ?? unit.code}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
                           </Select>
                         </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">Harga Jual</Label>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={variant.sellingPrice}
-                          onChange={(e) =>
-                            updateVariant(variant.id, (current) => ({
-                              ...current,
-                              sellingPrice: Math.max(Number(e.target.value) || 0, 0),
-                            }))
-                          }
-                        />
+                        <div className="space-y-1">
+                          <Label className="text-xs">Finishing</Label>
+                          <Select
+                            value={variant.finishingId ?? "none"}
+                            onValueChange={(value) =>
+                              updateVariant(variant.id, (current) => {
+                                const selectedFinishing = value === "none" ? null : finishings.find((item) => item.id === value) ?? null;
+                                const nextCode = ensureUniqueVariantCode(
+                                  buildVariantCodeSeed(
+                                    form.code,
+                                    current.material?.code ?? getVariantMaterialName(current),
+                                    selectedFinishing?.code ?? selectedFinishing?.name ?? null,
+                                  ),
+                                  form.materialVariants,
+                                  current.id,
+                                );
+                                return {
+                                  ...current,
+                                  code: nextCode,
+                                  finishingId: selectedFinishing?.id ?? null,
+                                  finishing: selectedFinishing,
+                                  name: buildVariantName(getVariantMaterialName(current), selectedFinishing?.name),
+                                };
+                              })
+                            }
+                          >
+                            <SelectTrigger className={cn(isDuplicateVariant && "border-destructive focus:ring-destructive/20")}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">-</SelectItem>
+                              {finishings.map((finishing) => (
+                                <SelectItem key={finishing.id} value={finishing.id}>
+                                  {finishing.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Harga Jual</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            value={variant.sellingPrice}
+                            onChange={(e) =>
+                              updateVariant(variant.id, (current) => ({
+                                ...current,
+                                sellingPrice: Math.max(Number(e.target.value) || 0, 0),
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Min Order</Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={variant.minimumOrder ?? 1}
+                            onChange={(e) =>
+                              updateVariant(variant.id, (current) => ({
+                                ...current,
+                                minimumOrder: Math.max(Number(e.target.value) || 1, 1),
+                              }))
+                            }
+                          />
+                        </div>
                       </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">Min Order</Label>
-                        <Input
-                          type="number"
-                          min={1}
-                          value={variant.minimumOrder ?? 1}
-                          onChange={(e) =>
-                            updateVariant(variant.id, (current) => ({
-                              ...current,
-                              minimumOrder: Math.max(Number(e.target.value) || 1, 1),
-                            }))
-                          }
-                        />
-                      </div>
-                    </div>
 
-                    <div className="space-y-1">
-                      <Label className="text-xs">Estimasi Varian</Label>
-                      <Input
-                        value={variant.estimateText ?? ""}
-                        onChange={(e) => updateVariant(variant.id, (current) => ({ ...current, estimateText: e.target.value }))}
-                        placeholder="Contoh: 2 hari"
-                      />
+                      <div className="space-y-1">
+                        <Label className="text-xs">Estimasi Varian</Label>
+                        <Input
+                          value={variant.estimateText ?? ""}
+                          onChange={(e) => updateVariant(variant.id, (current) => ({ ...current, estimateText: e.target.value }))}
+                          placeholder="Contoh: 2 hari"
+                        />
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <div className="grid grid-cols-[1fr_130px] gap-2">
                 <Popover open={materialSearchOpen} onOpenChange={setMaterialSearchOpen}>
@@ -883,7 +971,7 @@ export default function Products() {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Batal
             </Button>
-            <Button onClick={handleSave} disabled={createProduct.isPending || updateProduct.isPending}>
+            <Button onClick={handleSave} disabled={!canMutate || createProduct.isPending || updateProduct.isPending}>
               {editingProduct ? "Simpan" : "Tambah"}
             </Button>
           </DialogFooter>
@@ -902,7 +990,7 @@ export default function Products() {
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
               Batal
             </Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={deleteProduct.isPending}>
+            <Button variant="destructive" onClick={handleDelete} disabled={!canMutate || deleteProduct.isPending}>
               Hapus
             </Button>
           </DialogFooter>

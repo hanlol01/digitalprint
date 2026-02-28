@@ -40,6 +40,7 @@ const generateCategoryCode = async (): Promise<string> => {
 
 const categoriesRouter = Router();
 categoriesRouter.use(authenticate);
+categoriesRouter.use(authorizeRoles("admin", "management", "staff"));
 
 categoriesRouter.get(
   "/",
@@ -63,7 +64,7 @@ categoriesRouter.get(
 categoriesRouter.post(
   "/",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(createCategorySchema),
   asyncHandler(async (req, res) => {
     const body = req.body as z.infer<typeof createCategorySchema>;
@@ -83,7 +84,7 @@ categoriesRouter.post(
 categoriesRouter.patch(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(updateCategorySchema),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
@@ -110,7 +111,7 @@ categoriesRouter.patch(
 categoriesRouter.delete(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
     const existing = await prisma.productCategory.findFirst({ where: { id, deletedAt: null } });

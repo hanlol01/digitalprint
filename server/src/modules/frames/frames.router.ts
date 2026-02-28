@@ -48,6 +48,7 @@ const generateFrameCode = async (): Promise<string> => {
 
 const framesRouter = Router();
 framesRouter.use(authenticate);
+framesRouter.use(authorizeRoles("admin", "management", "staff"));
 
 const serializeFrame = (frame: Prisma.FrameMasterGetPayload<object>) => ({
   ...frame,
@@ -79,7 +80,7 @@ framesRouter.get(
 framesRouter.post(
   "/",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(createFrameSchema),
   asyncHandler(async (req, res) => {
     const body = req.body as z.infer<typeof createFrameSchema>;
@@ -101,7 +102,7 @@ framesRouter.post(
 framesRouter.patch(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(updateFrameSchema),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
@@ -128,7 +129,7 @@ framesRouter.patch(
 framesRouter.delete(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
     const existing = await prisma.frameMaster.findFirst({ where: { id, deletedAt: null } });

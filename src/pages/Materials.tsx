@@ -5,8 +5,10 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useAuth } from "@/contexts/AuthContext";
 import { useCreateMaterial, useDeleteMaterial, useMaterials, useUpdateMaterial } from "@/hooks/useMaterials";
 import { formatCurrency } from "@/lib/format";
+import { canMutateMasterData } from "@/lib/rbac";
 import { toast } from "sonner";
 import type { MaterialStock } from "@/types";
 
@@ -42,6 +44,7 @@ const formatCurrencyInput = (value: number): string => {
 };
 
 export default function Materials() {
+  const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitAttempted, setSubmitAttempted] = useState(false);
@@ -54,6 +57,7 @@ export default function Materials() {
   const createMaterial = useCreateMaterial();
   const updateMaterial = useUpdateMaterial();
   const deleteMaterial = useDeleteMaterial();
+  const canMutate = canMutateMasterData(user?.role);
 
   const filteredMaterials = useMemo(() => {
     const keyword = searchQuery.trim().toLowerCase();
@@ -64,6 +68,10 @@ export default function Materials() {
   const lowStock = useMemo(() => materials.filter((item) => item.currentStock <= item.minStock), [materials]);
 
   const openCreate = () => {
+    if (!canMutate) {
+      toast.error("Role management hanya bisa melihat data");
+      return;
+    }
     setEditingMaterial(null);
     setForm({ ...emptyMaterial, lastRestocked: new Date().toISOString() });
     setSubmitAttempted(false);
@@ -71,6 +79,10 @@ export default function Materials() {
   };
 
   const openEdit = (material: MaterialStock) => {
+    if (!canMutate) {
+      toast.error("Role management hanya bisa melihat data");
+      return;
+    }
     setEditingMaterial(material);
     setForm({
       name: material.name,
@@ -86,6 +98,10 @@ export default function Materials() {
   };
 
   const handleSave = async () => {
+    if (!canMutate) {
+      toast.error("Role management hanya bisa melihat data");
+      return;
+    }
     setSubmitAttempted(true);
     if (!form.name.trim()) {
       toast.error("Nama bahan wajib diisi");
@@ -135,6 +151,10 @@ export default function Materials() {
   };
 
   const handleDelete = async () => {
+    if (!canMutate) {
+      toast.error("Role management hanya bisa melihat data");
+      return;
+    }
     if (!deletingMaterial) return;
     try {
       await deleteMaterial.mutateAsync(deletingMaterial.id);
@@ -148,6 +168,11 @@ export default function Materials() {
 
   return (
     <div className="space-y-4 animate-fade-in">
+      {!canMutate ? (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+          Mode baca: role management tidak dapat menambah, mengubah, atau menghapus stok bahan.
+        </div>
+      ) : null}
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
         <div className="w-full sm:max-w-xs">
           <Input
@@ -157,9 +182,11 @@ export default function Materials() {
             className="bg-white"
           />
         </div>
-        <Button onClick={openCreate} className="gap-2">
-          <Plus className="w-4 h-4" /> Tambah Bahan
-        </Button>
+        {canMutate ? (
+          <Button onClick={openCreate} className="gap-2">
+            <Plus className="w-4 h-4" /> Tambah Bahan
+          </Button>
+        ) : null}
       </div>
 
       {lowStock.length > 0 && (
@@ -188,22 +215,24 @@ export default function Materials() {
                 </div>
                   <div className="flex items-center gap-1">
                     {isLow && <AlertTriangle className="w-4 h-4 text-warning" />}
-                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(material)}>
-                        <Edit className="w-3.5 h-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-destructive hover:text-destructive"
-                        onClick={() => {
-                          setDeletingMaterial(material);
-                          setDeleteDialogOpen(true);
-                        }}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
+                    {canMutate ? (
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(material)}>
+                          <Edit className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-destructive hover:text-destructive"
+                          onClick={() => {
+                            setDeletingMaterial(material);
+                            setDeleteDialogOpen(true);
+                          }}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
                 <div className="grid grid-cols-1 gap-2 mb-2 text-xs">
@@ -331,7 +360,7 @@ export default function Materials() {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Batal
             </Button>
-            <Button onClick={handleSave} disabled={createMaterial.isPending || updateMaterial.isPending}>
+            <Button onClick={handleSave} disabled={!canMutate || createMaterial.isPending || updateMaterial.isPending}>
               {editingMaterial ? "Simpan" : "Tambah"}
             </Button>
           </DialogFooter>
@@ -350,7 +379,7 @@ export default function Materials() {
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
               Batal
             </Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={deleteMaterial.isPending}>
+            <Button variant="destructive" onClick={handleDelete} disabled={!canMutate || deleteMaterial.isPending}>
               Hapus
             </Button>
           </DialogFooter>

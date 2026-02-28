@@ -25,6 +25,7 @@ const updateCustomerSchema = z.object({
 
 const customersRouter = Router();
 customersRouter.use(authenticate);
+customersRouter.use(authorizeRoles("admin", "management", "staff"));
 
 customersRouter.get(
   "/",
@@ -63,7 +64,7 @@ customersRouter.get(
 customersRouter.post(
   "/",
   authenticate,
-  authorizeRoles("owner", "admin", "kasir"),
+  authorizeRoles("admin", "staff"),
   validateBody(createCustomerSchema),
   asyncHandler(async (req, res) => {
     const body = req.body as z.infer<typeof createCustomerSchema>;
@@ -86,7 +87,7 @@ customersRouter.post(
 customersRouter.patch(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin", "kasir"),
+  authorizeRoles("admin", "staff"),
   validateBody(updateCustomerSchema),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
@@ -121,7 +122,7 @@ customersRouter.patch(
 customersRouter.delete(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
     const existing = await prisma.customer.findFirst({ where: { id, deletedAt: null } });

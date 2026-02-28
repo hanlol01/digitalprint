@@ -19,6 +19,7 @@ const updateExpenseSchema = createExpenseSchema.partial();
 
 const expensesRouter = Router();
 expensesRouter.use(authenticate);
+expensesRouter.use(authorizeRoles("admin", "management", "staff"));
 
 expensesRouter.get(
   "/",
@@ -60,7 +61,7 @@ expensesRouter.get(
 expensesRouter.post(
   "/",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(createExpenseSchema),
   asyncHandler(async (req, res) => {
     const body = req.body as z.infer<typeof createExpenseSchema>;
@@ -79,7 +80,7 @@ expensesRouter.post(
 expensesRouter.patch(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(updateExpenseSchema),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
@@ -107,7 +108,7 @@ expensesRouter.patch(
 expensesRouter.delete(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
     const existing = await prisma.expense.findFirst({ where: { id, deletedAt: null } });

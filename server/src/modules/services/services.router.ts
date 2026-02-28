@@ -24,6 +24,7 @@ const updateServiceSchema = createServiceSchema.partial();
 
 const servicesRouter = Router();
 servicesRouter.use(authenticate);
+servicesRouter.use(authorizeRoles("admin", "management", "staff"));
 
 const includeService = {
   product: true,
@@ -71,7 +72,7 @@ servicesRouter.get(
 servicesRouter.post(
   "/",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(createServiceSchema),
   asyncHandler(async (req, res) => {
     const body = req.body as z.infer<typeof createServiceSchema>;
@@ -98,7 +99,7 @@ servicesRouter.post(
 servicesRouter.patch(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(updateServiceSchema),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
@@ -132,7 +133,7 @@ servicesRouter.patch(
 servicesRouter.delete(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
     const existing = await prisma.serviceCatalog.findFirst({ where: { id, deletedAt: null } });

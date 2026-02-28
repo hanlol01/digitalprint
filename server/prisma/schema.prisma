@@ -44,9 +44,9 @@ enum TransactionItemType {
 }
 
 enum UserRole {
-  owner
+  management
   admin
-  kasir
+  staff
   operator
 
   @@map("peran_pengguna_enum")

@@ -9,9 +9,11 @@ import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useAuth } from "@/contexts/AuthContext";
 import { useCreateExpense, useDeleteExpense, useExpenses, useUpdateExpense } from "@/hooks/useExpenses";
 import { useDailySales, useExpenseByCategory, usePaymentMethodReport, useReportSummary } from "@/hooks/useReports";
 import { formatCurrency, formatNumber } from "@/lib/format";
+import { canManageExpenses } from "@/lib/rbac";
 import { cn } from "@/lib/utils";
 import type { Expense, TransactionItemType } from "@/types";
 import { toast } from "sonner";
@@ -36,6 +38,7 @@ const formatCurrencyInput = (value: string): string => {
 };
 
 export default function Reports() {
+  const { user } = useAuth();
   const [period, setPeriod] = useState<Period>("bulanan");
   const [startDate, setStartDate] = useState(new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().slice(0, 10));
   const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10));
@@ -48,6 +51,7 @@ export default function Reports() {
   const [expenseForm, setExpenseForm] = useState({ date: "", category: "Bahan Baku", description: "", amount: "" });
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
   const [categorySearch, setCategorySearch] = useState("");
+  const canMutateExpense = canManageExpenses(user?.role);
 
   const range = useMemo(
     () => ({
@@ -103,6 +107,10 @@ export default function Reports() {
   const profitMargin = summary && summary.totalRevenue > 0 ? ((summary.totalProfit / summary.totalRevenue) * 100).toFixed(1) : "0.0";
 
   const openAddExpense = () => {
+    if (!canMutateExpense) {
+      toast.error("Role Anda hanya dapat melihat laporan");
+      return;
+    }
     setEditingExpense(null);
     setExpenseForm({ date: new Date().toISOString().slice(0, 10), category: "Bahan Baku", description: "", amount: "" });
     setCategoryPickerOpen(false);
@@ -111,6 +119,10 @@ export default function Reports() {
   };
 
   const openEditExpense = (expense: Expense) => {
+    if (!canMutateExpense) {
+      toast.error("Role Anda hanya dapat melihat laporan");
+      return;
+    }
     const normalizedExpenseCategory = expense.category.trim();
     const categoryExists = categoryOptions.some((category) => category.toLowerCase() === normalizedExpenseCategory.toLowerCase());
     setEditingExpense(expense);
@@ -126,6 +138,10 @@ export default function Reports() {
   };
 
   const saveExpense = async () => {
+    if (!canMutateExpense) {
+      toast.error("Role Anda hanya dapat melihat laporan");
+      return;
+    }
     const amount = Number(parseCurrencyInput(expenseForm.amount));
     const category = expenseForm.category.trim();
 
@@ -160,6 +176,10 @@ export default function Reports() {
   };
 
   const confirmDelete = async () => {
+    if (!canMutateExpense) {
+      toast.error("Role Anda hanya dapat melihat laporan");
+      return;
+    }
     if (!deletingExpense) return;
     try {
       await deleteExpense.mutateAsync(deletingExpense.id);
@@ -173,6 +193,11 @@ export default function Reports() {
 
   return (
     <div className="space-y-6 animate-fade-in">
+      {!canMutateExpense ? (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+          Mode baca: hanya admin yang dapat menambah, mengubah, atau menghapus pengeluaran.
+        </div>
+      ) : null}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-end">
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">Periode</Label>
@@ -340,9 +365,11 @@ export default function Reports() {
       <div className="stat-card">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-foreground text-sm">Input Pengeluaran</h3>
-          <Button size="sm" onClick={openAddExpense} className="gap-1.5">
-            <Plus className="w-4 h-4" /> Tambah
-          </Button>
+          {canMutateExpense ? (
+            <Button size="sm" onClick={openAddExpense} className="gap-1.5">
+              <Plus className="w-4 h-4" /> Tambah
+            </Button>
+          ) : null}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -352,7 +379,9 @@ export default function Reports() {
                 <th className="pb-2 text-xs text-muted-foreground font-medium">Kategori</th>
                 <th className="pb-2 text-xs text-muted-foreground font-medium">Keterangan</th>
                 <th className="pb-2 text-xs text-muted-foreground font-medium text-right">Jumlah</th>
-                <th className="pb-2 text-xs text-muted-foreground font-medium text-right">Aksi</th>
+                {canMutateExpense ? (
+                  <th className="pb-2 text-xs text-muted-foreground font-medium text-right">Aksi</th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
@@ -364,24 +393,26 @@ export default function Reports() {
                   </td>
                   <td className="py-2.5 text-muted-foreground">{expense.description}</td>
                   <td className="py-2.5 text-right font-medium text-destructive">{formatCurrency(expense.amount)}</td>
-                  <td className="py-2.5 text-right">
-                    <div className="flex gap-1 justify-end">
-                      <Button variant="ghost" size="sm" onClick={() => openEditExpense(expense)}>
-                        Edit
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-destructive hover:text-destructive"
-                        onClick={() => {
-                          setDeletingExpense(expense);
-                          setDeleteDialogOpen(true);
-                        }}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                  </td>
+                  {canMutateExpense ? (
+                    <td className="py-2.5 text-right">
+                      <div className="flex gap-1 justify-end">
+                        <Button variant="ghost" size="sm" onClick={() => openEditExpense(expense)}>
+                          Edit
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-destructive hover:text-destructive"
+                          onClick={() => {
+                            setDeletingExpense(expense);
+                            setDeleteDialogOpen(true);
+                          }}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>

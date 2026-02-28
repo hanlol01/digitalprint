@@ -34,21 +34,30 @@ const App = () => (
 
             <Route element={<ProtectedRoute />}>
               <Route element={<AppLayout />}>
-                <Route path="/" element={<Index />} />
-                <Route path="/pos" element={<POS />} />
-                <Route path="/orders" element={<Orders />} />
-                <Route path="/products" element={<Products />} />
-                <Route path="/services" element={<ServicesPage />} />
-                <Route path="/displays" element={<DisplaysPage />} />
-                <Route path="/customers" element={<Customers />} />
-                <Route path="/materials" element={<Materials />} />
-                <Route path="/master-data/categories" element={<MasterDataPage type="categories" />} />
-                <Route path="/master-data/units" element={<MasterDataPage type="units" />} />
-                <Route path="/master-data/finishings" element={<MasterDataPage type="finishings" />} />
-                <Route path="/master-data/materials" element={<MasterDataPage type="materials" />} />
-                <Route path="/master-data/frames" element={<MasterDataPage type="frames" />} />
-                <Route path="/calculator" element={<CalculatorPage />} />
-                <Route path="/reports" element={<Reports />} />
+                <Route element={<ProtectedRoute allowedRoles={["admin", "management"]} />}>
+                  <Route path="/" element={<Index />} />
+                  <Route path="/products" element={<Products />} />
+                  <Route path="/services" element={<ServicesPage />} />
+                  <Route path="/displays" element={<DisplaysPage />} />
+                  <Route path="/materials" element={<Materials />} />
+                  <Route path="/master-data/categories" element={<MasterDataPage type="categories" />} />
+                  <Route path="/master-data/units" element={<MasterDataPage type="units" />} />
+                  <Route path="/master-data/finishings" element={<MasterDataPage type="finishings" />} />
+                  <Route path="/master-data/materials" element={<MasterDataPage type="materials" />} />
+                  <Route path="/master-data/frames" element={<MasterDataPage type="frames" />} />
+                </Route>
+
+                <Route element={<ProtectedRoute allowedRoles={["admin", "management", "staff"]} />}>
+                  <Route path="/pos" element={<POS />} />
+                  <Route path="/customers" element={<Customers />} />
+                  <Route path="/calculator" element={<CalculatorPage />} />
+                  <Route path="/reports" element={<Reports />} />
+                </Route>
+
+                <Route element={<ProtectedRoute allowedRoles={["admin", "management", "operator"]} />}>
+                  <Route path="/orders" element={<Orders />} />
+                </Route>
+
                 <Route path="*" element={<NotFound />} />
               </Route>
             </Route>

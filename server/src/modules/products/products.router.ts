@@ -60,6 +60,7 @@ const updateProductSchema = z.object({
 
 const productsRouter = Router();
 productsRouter.use(authenticate);
+productsRouter.use(authorizeRoles("admin", "management", "staff"));
 
 const includeProduct = {
   category: true,
@@ -157,7 +158,7 @@ productsRouter.get(
 productsRouter.post(
   "/",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(createProductSchema),
   asyncHandler(async (req, res) => {
     const body = req.body as z.infer<typeof createProductSchema>;
@@ -250,7 +251,7 @@ productsRouter.post(
 productsRouter.patch(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(updateProductSchema),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
@@ -374,7 +375,7 @@ productsRouter.patch(
 productsRouter.delete(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
     const existing = await prisma.product.findFirst({ where: { id, deletedAt: null } });

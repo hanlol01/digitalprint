@@ -39,6 +39,7 @@ const generateFinishingCode = async (): Promise<string> => {
 
 const finishingsRouter = Router();
 finishingsRouter.use(authenticate);
+finishingsRouter.use(authorizeRoles("admin", "management", "staff"));
 
 finishingsRouter.get(
   "/",
@@ -64,7 +65,7 @@ finishingsRouter.get(
 finishingsRouter.post(
   "/",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(createFinishingSchema),
   asyncHandler(async (req, res) => {
     const body = req.body as z.infer<typeof createFinishingSchema>;
@@ -83,7 +84,7 @@ finishingsRouter.post(
 finishingsRouter.patch(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(updateFinishingSchema),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
@@ -107,7 +108,7 @@ finishingsRouter.patch(
 finishingsRouter.delete(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
     const existing = await prisma.finishingMaster.findFirst({ where: { id, deletedAt: null } });

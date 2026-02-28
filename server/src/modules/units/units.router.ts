@@ -41,6 +41,7 @@ const generateUnitCode = async (): Promise<string> => {
 
 const unitsRouter = Router();
 unitsRouter.use(authenticate);
+unitsRouter.use(authorizeRoles("admin", "management", "staff"));
 
 unitsRouter.get(
   "/",
@@ -66,7 +67,7 @@ unitsRouter.get(
 unitsRouter.post(
   "/",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(createUnitSchema),
   asyncHandler(async (req, res) => {
     const body = req.body as z.infer<typeof createUnitSchema>;
@@ -85,7 +86,7 @@ unitsRouter.post(
 unitsRouter.patch(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(updateUnitSchema),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
@@ -109,7 +110,7 @@ unitsRouter.patch(
 unitsRouter.delete(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
     const existing = await prisma.unitMaster.findFirst({ where: { id, deletedAt: null } });

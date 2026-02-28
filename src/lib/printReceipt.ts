@@ -33,10 +33,11 @@ export interface ReceiptData {
 // Konfigurasi Toko (Edit sesuai kebutuhan)
 
 const STORE_CONFIG = {
-  name: "One Stop Digital Printing",
-  address: "Jl. Bagusrangin No.20, Lebakgede, Kecamatan Coblong",
+  name: "One Stop Service Digital Printing/Advertising",
+  address: "Jl. Terusan Sawah Kurung 4 No. 35C, Regol, Moch Toha",
   city: "Kota Bandung, 40132",
-  phone: "0812-3456-7890",
+  phone1: "0817-2113-95",
+  phone2: "0821-2022-2685",
   footerLine1: "Terima kasih atas kunjungan Anda!",
   footerLine2: "Barang yang sudah dibeli tidak dapat dikembalikan. Jika ada yang ingin ditanyakan, silahkan hubungi kami.",
   footerLine3: "Lanjut",
@@ -261,7 +262,8 @@ function buildReceiptHTML(data: ReceiptData): string {
     <div class="store-name">${escapeHTML(STORE_CONFIG.name)}</div>
     <div class="store-info">${escapeHTML(STORE_CONFIG.address)}</div>
     <div class="store-info">${escapeHTML(STORE_CONFIG.city)}</div>
-    <div class="store-info">Telp: ${escapeHTML(STORE_CONFIG.phone)}</div>
+    <div class="store-info">WA/Telp: ${escapeHTML(STORE_CONFIG.phone1)}</div>
+    <div class="store-info">WA/Telp: ${escapeHTML(STORE_CONFIG.phone2)}</div>
   </div>
 
   <hr class="divider-double"/>
@@ -345,10 +347,14 @@ function buildReceiptHTML(data: ReceiptData): string {
 
 // Fungsi utama: Buka jendela cetak nota
 
-export function printReceipt(data: ReceiptData): void {
+export function openPrintWindow(): Window | null {
+  return window.open("", "_blank", "width=350,height=700");
+}
+
+export function printReceipt(data: ReceiptData, targetWindow?: Window | null): void {
   const html = buildReceiptHTML(data);
 
-  const printWindow = window.open("", "_blank", "width=350,height=700");
+  const printWindow = targetWindow ?? openPrintWindow();
   if (!printWindow) {
     alert("Popup diblokir browser. Izinkan popup untuk mencetak nota.");
     return;

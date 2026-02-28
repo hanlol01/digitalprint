@@ -41,6 +41,7 @@ const generateServiceMaterialCode = async (): Promise<string> => {
 
 const serviceMaterialsRouter = Router();
 serviceMaterialsRouter.use(authenticate);
+serviceMaterialsRouter.use(authorizeRoles("admin", "management", "staff"));
 
 serviceMaterialsRouter.get(
   "/",
@@ -66,7 +67,7 @@ serviceMaterialsRouter.get(
 serviceMaterialsRouter.post(
   "/",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(createServiceMaterialSchema),
   asyncHandler(async (req, res) => {
     const body = req.body as z.infer<typeof createServiceMaterialSchema>;
@@ -85,7 +86,7 @@ serviceMaterialsRouter.post(
 serviceMaterialsRouter.patch(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   validateBody(updateServiceMaterialSchema),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
@@ -109,7 +110,7 @@ serviceMaterialsRouter.patch(
 serviceMaterialsRouter.delete(
   "/:id",
   authenticate,
-  authorizeRoles("owner", "admin"),
+  authorizeRoles("admin"),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
     const existing = await prisma.serviceMaterialMaster.findFirst({ where: { id, deletedAt: null } });

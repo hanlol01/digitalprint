@@ -9,9 +9,9 @@ const prisma = new PrismaClient();
 const seedUsers = async (): Promise<void> => {
   const users = [
     {
-      username: process.env.OWNER_SEED_USERNAME ?? "owner",
-      password: process.env.OWNER_SEED_PASSWORD ?? "owner123",
-      role: UserRole.owner,
+      username: process.env.MANAGEMENT_SEED_USERNAME ?? process.env.OWNER_SEED_USERNAME ?? "owner",
+      password: process.env.MANAGEMENT_SEED_PASSWORD ?? process.env.OWNER_SEED_PASSWORD ?? "owner123",
+      role: UserRole.management,
     },
     {
       username: process.env.ADMIN_SEED_USERNAME ?? "admin",
@@ -19,9 +19,9 @@ const seedUsers = async (): Promise<void> => {
       role: UserRole.admin,
     },
     {
-      username: process.env.KASIR_SEED_USERNAME ?? "kasir",
-      password: process.env.KASIR_SEED_PASSWORD ?? "kasir123",
-      role: UserRole.kasir,
+      username: process.env.STAFF_SEED_USERNAME ?? process.env.KASIR_SEED_USERNAME ?? "kasir",
+      password: process.env.STAFF_SEED_PASSWORD ?? process.env.KASIR_SEED_PASSWORD ?? "kasir123",
+      role: UserRole.staff,
     },
     {
       username: process.env.OPERATOR_SEED_USERNAME ?? "operator",

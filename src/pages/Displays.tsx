@@ -10,7 +10,9 @@ import { useProducts } from "@/hooks/useProducts";
 import { useMaterials } from "@/hooks/useMaterials";
 import { useCreateDisplay, useDeleteDisplay, useDisplays, useUpdateDisplay, type DisplayPayload } from "@/hooks/useDisplays";
 import { useFinishings, useFrames, useUnits } from "@/hooks/useMasters";
+import { useAuth } from "@/contexts/AuthContext";
 import { formatCurrency } from "@/lib/format";
+import { canMutateMasterData } from "@/lib/rbac";
 import type { DisplayCatalog } from "@/types";
 import { toast } from "sonner";
 
@@ -67,6 +69,7 @@ const generateNextDisplayCode = (displays: DisplayCatalog[]): string => {
 };
 
 export default function DisplaysPage() {
+  const { user } = useAuth();
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -87,6 +90,7 @@ export default function DisplaysPage() {
   const createDisplay = useCreateDisplay();
   const updateDisplay = useUpdateDisplay();
   const deleteDisplay = useDeleteDisplay();
+  const canMutate = canMutateMasterData(user?.role);
 
   const sortedDisplays = useMemo(() => [...displays].sort(compareByCodeAsc), [displays]);
   const sortedUnits = useMemo(() => [...units].sort(compareByCodeThenName), [units]);
@@ -142,6 +146,10 @@ export default function DisplaysPage() {
   }, [dialogOpen, editing, nextDisplayCode, defaultDisplayCategory, defaultDisplayProduct, defaultSetUnit]);
 
   const openCreate = () => {
+    if (!canMutate) {
+      toast.error("Role management hanya bisa melihat data");
+      return;
+    }
     setEditing(null);
     setForm({
       ...emptyForm,
@@ -157,6 +165,10 @@ export default function DisplaysPage() {
   };
 
   const openEdit = (display: DisplayCatalog) => {
+    if (!canMutate) {
+      toast.error("Role management hanya bisa melihat data");
+      return;
+    }
     setEditing(display);
     setForm({
       code: display.code,
@@ -176,6 +188,10 @@ export default function DisplaysPage() {
   };
 
   const handleSave = async () => {
+    if (!canMutate) {
+      toast.error("Role management hanya bisa melihat data");
+      return;
+    }
     const resolvedCode = form.code.trim() || nextDisplayCode;
     if (!resolvedCode.trim()) return toast.error("Kode display wajib diisi");
     if (!form.name.trim()) return toast.error("Nama display wajib diisi");
@@ -206,6 +222,10 @@ export default function DisplaysPage() {
   };
 
   const handleDelete = async () => {
+    if (!canMutate) {
+      toast.error("Role management hanya bisa melihat data");
+      return;
+    }
     if (!deleting) return;
     try {
       await deleteDisplay.mutateAsync(deleting.id);
@@ -219,14 +239,21 @@ export default function DisplaysPage() {
 
   return (
     <div className="space-y-4 animate-fade-in">
+      {!canMutate ? (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+          Mode baca: role management tidak dapat menambah, mengubah, atau menghapus display.
+        </div>
+      ) : null}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari display..." className="pl-9 bg-card" />
         </div>
-        <Button onClick={openCreate} className="gap-2">
-          <Plus className="w-4 h-4" /> Tambah Display
-        </Button>
+        {canMutate ? (
+          <Button onClick={openCreate} className="gap-2">
+            <Plus className="w-4 h-4" /> Tambah Display
+          </Button>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -241,22 +268,24 @@ export default function DisplaysPage() {
                   </h4>
                   <p className="text-xs text-muted-foreground">{display.product?.name ?? "-"}</p>
                 </div>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openEdit(display)}>
-                    <Edit className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-8 w-8 text-destructive hover:text-destructive"
-                    onClick={() => {
-                      setDeleting(display);
-                      setDeleteDialogOpen(true);
-                    }}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
+                {canMutate ? (
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openEdit(display)}>
+                      <Edit className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 text-destructive hover:text-destructive"
+                      onClick={() => {
+                        setDeleting(display);
+                        setDeleteDialogOpen(true);
+                      }}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ) : null}
               </div>
               <p className="text-sm text-muted-foreground">
                 {display.frame?.name ?? "-"} | {display.material?.name ?? "Tanpa Bahan"} | {display.finishing?.name ?? "-"}
@@ -427,7 +456,7 @@ export default function DisplaysPage() {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Batal
             </Button>
-            <Button onClick={handleSave} disabled={createDisplay.isPending || updateDisplay.isPending}>
+            <Button onClick={handleSave} disabled={!canMutate || createDisplay.isPending || updateDisplay.isPending}>
               {editing ? "Simpan" : "Tambah"}
             </Button>
           </DialogFooter>
@@ -446,7 +475,7 @@ export default function DisplaysPage() {
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
               Batal
             </Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={deleteDisplay.isPending}>
+            <Button variant="destructive" onClick={handleDelete} disabled={!canMutate || deleteDisplay.isPending}>
               Hapus
             </Button>
           </DialogFooter>

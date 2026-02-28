@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { useAuth } from "@/contexts/AuthContext";
 import { useCategories, useCreateCategory, useDeleteCategory, useUpdateCategory } from "@/hooks/useCategories";
 import {
   useCreateFinishing,
@@ -25,6 +26,7 @@ import {
   useUpdateServiceMaterial,
   useUpdateUnit,
 } from "@/hooks/useMasters";
+import { canMutateMasterData } from "@/lib/rbac";
 import type { FinishingMaster, FrameMaster, ProductCategory, ServiceMaterialMaster, UnitMaster } from "@/types";
 
 type MasterDataType = "categories" | "units" | "finishings" | "materials" | "frames";
@@ -125,6 +127,7 @@ const formatRupiahFromDigits = (value: string): string => {
 };
 
 export default function MasterDataPage({ type }: MasterDataPageProps) {
+  const { user } = useAuth();
   const config = masterConfig[type];
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -133,6 +136,7 @@ export default function MasterDataPage({ type }: MasterDataPageProps) {
   const [deletingItem, setDeletingItem] = useState<MasterDataItem | null>(null);
   const [form, setForm] = useState<MasterDataForm>(emptyForm);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const canMutate = canMutateMasterData(user?.role);
 
   const categoriesQuery = useCategories({ activeOnly: false, search });
   const unitsQuery = useUnits({ activeOnly: false, search });
@@ -184,12 +188,20 @@ export default function MasterDataPage({ type }: MasterDataPageProps) {
     deleteFrame.isPending;
 
   const openCreate = () => {
+    if (!canMutate) {
+      toast.error("Role management hanya bisa melihat data");
+      return;
+    }
     setEditingItem(null);
     setForm({ ...emptyForm, isActive: true, icon: type === "categories" ? "box" : "" });
     setDialogOpen(true);
   };
 
   const openEdit = (item: MasterDataItem) => {
+    if (!canMutate) {
+      toast.error("Role management hanya bisa melihat data");
+      return;
+    }
     setEditingItem(item);
     setForm({
       code: (item.code ?? "").toString(),
@@ -204,6 +216,10 @@ export default function MasterDataPage({ type }: MasterDataPageProps) {
   };
 
   const handleSave = async () => {
+    if (!canMutate) {
+      toast.error("Role management hanya bisa melihat data");
+      return;
+    }
     const name = form.name.trim();
     if (!name) {
       toast.error("Nama wajib diisi");
@@ -282,11 +298,19 @@ export default function MasterDataPage({ type }: MasterDataPageProps) {
   };
 
   const openDeleteDialog = (item: MasterDataItem) => {
+    if (!canMutate) {
+      toast.error("Role management hanya bisa melihat data");
+      return;
+    }
     setDeletingItem(item);
     setDeleteDialogOpen(true);
   };
 
   const handleDelete = async () => {
+    if (!canMutate) {
+      toast.error("Role management hanya bisa melihat data");
+      return;
+    }
     if (!deletingItem) return;
     try {
       if (type === "categories") {
@@ -310,15 +334,22 @@ export default function MasterDataPage({ type }: MasterDataPageProps) {
 
   return (
     <div className="space-y-4 animate-fade-in">
+      {!canMutate ? (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+          Mode baca: role management tidak dapat menambah, mengubah, atau menghapus master data.
+        </div>
+      ) : null}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
           <h2 className="text-xl font-semibold text-foreground">{config.title}</h2>
           <p className="text-sm text-muted-foreground">{config.description}</p>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="mr-2 h-4 w-4" />
-          Tambah Data
-        </Button>
+        {canMutate ? (
+          <Button onClick={openCreate}>
+            <Plus className="mr-2 h-4 w-4" />
+            Tambah Data
+          </Button>
+        ) : null}
       </div>
 
       <div className="max-w-md">
@@ -359,14 +390,16 @@ export default function MasterDataPage({ type }: MasterDataPageProps) {
                   </span>
                 </div>
                 {extra ? <p className="text-xs text-muted-foreground">{extra}</p> : null}
-                <div className="flex items-center justify-end gap-1 pt-1">
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(item)}>
-                    <Edit className="h-4 w-4" />
-                  </Button>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => openDeleteDialog(item)}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
+                {canMutate ? (
+                  <div className="flex items-center justify-end gap-1 pt-1">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(item)}>
+                      <Edit className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => openDeleteDialog(item)}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             );
           })}
@@ -463,7 +496,7 @@ export default function MasterDataPage({ type }: MasterDataPageProps) {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Batal
             </Button>
-            <Button onClick={handleSave} disabled={isMutating}>
+            <Button onClick={handleSave} disabled={!canMutate || isMutating}>
               {editingItem ? "Simpan Perubahan" : "Tambah Data"}
             </Button>
           </DialogFooter>
@@ -482,7 +515,7 @@ export default function MasterDataPage({ type }: MasterDataPageProps) {
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
               Batal
             </Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={isMutating}>
+            <Button variant="destructive" onClick={handleDelete} disabled={!canMutate || isMutating}>
               Hapus
             </Button>
           </DialogFooter>
