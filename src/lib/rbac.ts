@@ -46,7 +46,10 @@ export const canCreateOrder = (role: RuntimeRole): boolean => {
   const normalizedRole = normalizeRole(role);
   return normalizedRole === "admin" || normalizedRole === "staff";
 };
-export const canUpdateOrderStatus = (role: RuntimeRole): boolean => normalizeRole(role) === "admin";
+export const canUpdateOrderStatus = (role: RuntimeRole): boolean => {
+  const normalizedRole = normalizeRole(role);
+  return normalizedRole === "admin" || normalizedRole === "operator";
+};
 export const canManageExpenses = (role: RuntimeRole): boolean => normalizeRole(role) === "admin";
 export const canManageCustomers = (role: RuntimeRole): boolean => {
   const normalizedRole = normalizeRole(role);
@@ -55,7 +58,7 @@ export const canManageCustomers = (role: RuntimeRole): boolean => {
 export const isGlobalReadOnlyRole = (role: RuntimeRole): boolean => normalizeRole(role) === "management";
 export const isOrdersReadOnlyRole = (role: RuntimeRole): boolean => {
   const normalizedRole = normalizeRole(role);
-  return normalizedRole === "management" || normalizedRole === "operator";
+  return normalizedRole === "management";
 };
 
 export const ROLE_LABELS: Record<UserRole, string> = {

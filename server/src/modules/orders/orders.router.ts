@@ -662,7 +662,7 @@ ordersRouter.post(
 ordersRouter.patch(
   "/:id/status",
   authenticate,
-  authorizeRoles("admin"),
+  authorizeRoles("admin", "operator"),
   validateBody(updateStatusSchema),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
