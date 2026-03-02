@@ -68,18 +68,21 @@ enum StockDirection {
 }
 
 model User {
-  id                 String   @id @default(uuid())
-  username           String   @unique @map("nama_pengguna")
-  passwordHash       String   @map("kata_sandi_hash")
-  role               UserRole @default(admin) @map("peran")
-  isActive           Boolean  @default(true) @map("aktif")
-  mustChangePassword Boolean  @default(true) @map("wajib_ganti_kata_sandi")
-  createdAt          DateTime @default(now()) @map("dibuat_pada")
-  updatedAt          DateTime @updatedAt @map("diperbarui_pada")
+  id           String   @id @default(uuid())
+  username     String   @unique @map("nama_pengguna")
+  passwordHash String   @map("kata_sandi_hash")
+  fullName     String?  @map("nama_lengkap")
+  address      String?  @map("alamat")
+  phone        String?  @map("nomor_wa")
+  role         UserRole @default(admin) @map("peran")
+  isActive     Boolean  @default(true) @map("aktif")
+  createdAt    DateTime @default(now()) @map("dibuat_pada")
+  updatedAt    DateTime @updatedAt @map("diperbarui_pada")
   deletedAt          DateTime? @map("dihapus_pada")
 
   stockMovements StockMovement[]
 
+  @@index([phone])
   @@index([deletedAt])
   @@map("pengguna")
 }
@@ -185,6 +188,8 @@ model Product {
   hasCustomSize    Boolean     @default(false) @map("punya_ukuran_kustom")
   customWidth      Decimal?    @db.Decimal(14, 4) @map("panjang_kustom")
   customHeight     Decimal?    @db.Decimal(14, 4) @map("lebar_kustom")
+  specialNotesEnabled Boolean  @default(false) @map("catatan_khusus_aktif")
+  specialNoteOptions  String[] @default([]) @map("opsi_catatan_khusus")
   finishingCost    Int         @default(0) @map("biaya_finishing")
   estimatedMinutes Int         @default(0) @map("estimasi_menit")
   isActive         Boolean     @default(true) @map("aktif")
@@ -419,6 +424,7 @@ model OrderItem {
   width            Decimal?    @db.Decimal(14, 4) @map("panjang")
   height           Decimal?    @db.Decimal(14, 4) @map("lebar")
   notes            String      @default("") @map("catatan")
+  specialNotes     String[]    @default([]) @map("catatan_khusus")
   finishing       Boolean     @default(false)
   finishingCost   Int         @default(0) @map("biaya_finishing")
   subtotal        Int

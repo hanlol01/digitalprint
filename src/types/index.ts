@@ -83,6 +83,8 @@ export interface Product {
   hasCustomSize: boolean;
   customWidth?: number | null;
   customHeight?: number | null;
+  specialNotesEnabled: boolean;
+  specialNotes: string[];
   finishingCost: number;
   estimatedMinutes: number;
   isActive?: boolean;
@@ -99,6 +101,7 @@ export interface CartItem {
   width?: number;
   height?: number;
   notes: string;
+  specialNotes: string[];
   finishing: boolean;
   subtotal: number;
 }
@@ -201,6 +204,7 @@ export interface OrderItem {
   width: number | null;
   height: number | null;
   notes: string;
+  specialNotes: string[];
   finishing: boolean;
   finishingCost: number;
   subtotal: number;
@@ -242,6 +246,18 @@ export interface Customer {
   loyaltyPoints: number;
   createdAt: string;
   isActive?: boolean;
+}
+
+export interface Employee {
+  id: string;
+  fullName: string | null;
+  address: string | null;
+  phone: string | null;
+  username: string;
+  role: UserRole;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Expense {

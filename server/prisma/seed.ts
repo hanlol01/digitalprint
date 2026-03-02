@@ -36,6 +36,7 @@ const seedUsers = async (): Promise<void> => {
       where: { username: user.username },
       update: {
         passwordHash,
+        fullName: user.username,
         role: user.role,
         isActive: true,
         deletedAt: null,
@@ -43,9 +44,9 @@ const seedUsers = async (): Promise<void> => {
       create: {
         username: user.username,
         passwordHash,
+        fullName: user.username,
         role: user.role,
         isActive: true,
-        mustChangePassword: true,
       },
     });
   }

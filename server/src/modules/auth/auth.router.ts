@@ -8,6 +8,7 @@ import { hashPassword, verifyPassword } from "../../utils/password";
 import { signAccessToken } from "../../utils/jwt";
 import { authenticate } from "../../middlewares/auth";
 import { validateBody } from "../../middlewares/validate";
+import { assertValidPhone, normalizePhone } from "../../utils/phone";
 
 const loginSchema = z.object({
   username: z.string().min(1),
@@ -17,6 +18,12 @@ const loginSchema = z.object({
 const changePasswordSchema = z.object({
   oldPassword: z.string().min(1),
   newPassword: z.string().min(6),
+});
+
+const updateProfileSchema = z.object({
+  fullName: z.string().min(2).max(120).optional(),
+  address: z.string().max(255).optional(),
+  phone: z.string().optional(),
 });
 
 const authRouter = Router();
@@ -55,8 +62,10 @@ authRouter.post(
       user: {
         id: user.id,
         username: user.username,
+        fullName: user.fullName,
+        address: user.address,
+        phone: user.phone,
         role: user.role,
-        mustChangePassword: user.mustChangePassword,
       },
     });
   }),
@@ -71,8 +80,10 @@ authRouter.get(
       select: {
         id: true,
         username: true,
+        fullName: true,
+        address: true,
+        phone: true,
         role: true,
-        mustChangePassword: true,
       },
     });
 
@@ -81,6 +92,54 @@ authRouter.get(
     }
 
     sendSuccess(res, user);
+  }),
+);
+
+authRouter.patch(
+  "/profile",
+  authenticate,
+  validateBody(updateProfileSchema),
+  asyncHandler(async (req, res) => {
+    const { fullName, address, phone } = req.body as z.infer<typeof updateProfileSchema>;
+    const normalizedPhone = normalizePhone(phone);
+    assertValidPhone(normalizedPhone);
+
+    if (fullName !== undefined && fullName.trim().length < 2) {
+      throw new ApiError(400, "Nama lengkap minimal 2 karakter");
+    }
+
+    if (normalizedPhone) {
+      const samePhone = await prisma.user.findFirst({
+        where: {
+          phone: normalizedPhone,
+          deletedAt: null,
+          id: { not: req.user!.id },
+        },
+        select: { id: true },
+      });
+      if (samePhone) {
+        throw new ApiError(400, "Nomor WhatsApp sudah digunakan");
+      }
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: req.user!.id },
+      data: {
+        ...(fullName !== undefined ? { fullName: fullName.trim() || null } : {}),
+        ...(address !== undefined ? { address: address.trim() || null } : {}),
+        ...(phone !== undefined ? { phone: normalizedPhone } : {}),
+      },
+      select: {
+        id: true,
+        username: true,
+        fullName: true,
+        address: true,
+        phone: true,
+        role: true,
+      },
+    });
+
+    sendSuccess(res, updated, "Profil berhasil diperbarui");
   }),
 );
 
@@ -106,7 +165,6 @@ authRouter.patch(
       where: { id: user.id },
       data: {
         passwordHash: newHash,
-        mustChangePassword: false,
       },
     });
 

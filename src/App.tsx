@@ -17,6 +17,7 @@ import Materials from "./pages/Materials";
 import CalculatorPage from "./pages/Calculator";
 import Reports from "./pages/Reports";
 import MasterDataPage from "./pages/MasterData";
+import Employees from "./pages/Employees";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 
@@ -45,6 +46,10 @@ const App = () => (
                   <Route path="/master-data/finishings" element={<MasterDataPage type="finishings" />} />
                   <Route path="/master-data/materials" element={<MasterDataPage type="materials" />} />
                   <Route path="/master-data/frames" element={<MasterDataPage type="frames" />} />
+                </Route>
+
+                <Route element={<ProtectedRoute allowedRoles={["management"]} />}>
+                  <Route path="/master-data/employees" element={<Employees />} />
                 </Route>
 
                 <Route element={<ProtectedRoute allowedRoles={["admin", "management", "staff"]} />}>

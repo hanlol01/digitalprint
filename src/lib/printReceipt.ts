@@ -8,6 +8,7 @@ export interface ReceiptItem {
   itemType: TransactionItemType;
   material: string;
   finishing: string;
+  specialNotes?: string[];
   quantity: number;
   width?: number;
   height?: number;
@@ -83,6 +84,11 @@ function buildReceiptHTML(data: ReceiptData): string {
             ${item.quantity}x${dimLabel}
             &nbsp;&middot;&nbsp;${escapeHTML(item.material)}
             ${item.finishing !== "Tanpa Finishing" ? `&nbsp;&middot;&nbsp;${escapeHTML(item.finishing)}` : ""}
+            ${
+              item.specialNotes?.length
+                ? `<div class="item-special">Catatan Khusus: ${escapeHTML(item.specialNotes.join(", "))}</div>`
+                : ""
+            }
           </td>
           <td class="item-price">${fmtCurrency(item.subtotal)}</td>
         </tr>`;
@@ -188,6 +194,11 @@ function buildReceiptHTML(data: ReceiptData): string {
     color: #444;
     padding-left: 4px;
     padding-bottom: 2px;
+  }
+  .item-detail-row .item-special {
+    margin-top: 2px;
+    color: #111;
+    font-weight: 600;
   }
   .item-detail-row .item-price {
     font-size: 11px;

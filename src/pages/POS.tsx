@@ -57,6 +57,8 @@ const createFallbackProduct = (id: string, name: string, categoryId: string): Pr
   hasCustomSize: false,
   customWidth: null,
   customHeight: null,
+  specialNotesEnabled: false,
+  specialNotes: [],
   finishingCost: 0,
   estimatedMinutes: 0,
   isActive: true,
@@ -119,6 +121,20 @@ const fallbackLabel = (value?: string | null, empty = "-"): string => {
   const normalized = value?.trim();
   return normalized ? normalized : empty;
 };
+const normalizeSpecialNoteList = (notes: string[]): string[] => {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const rawNote of notes) {
+    const note = rawNote.trim();
+    if (!note) continue;
+    const key = note.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(note.slice(0, 120));
+    if (normalized.length >= 20) break;
+  }
+  return normalized;
+};
 const getCartMaterialLabel = (item: CartItem): string => {
   if (item.itemType === "produk") return fallbackLabel(item.selectedMaterial?.material?.name, "-");
   if (item.itemType === "jasa") return fallbackLabel(item.selectedService?.serviceMaterial?.name, "-");
@@ -132,6 +148,10 @@ const getCartFinishingLabel = (item: CartItem): string => {
   }
   if (item.itemType === "jasa") return fallbackLabel(item.selectedService?.finishing?.name, "Tanpa Finishing");
   return fallbackLabel(item.selectedDisplay?.finishing?.name, "Tanpa Finishing");
+};
+const getCartSpecialNotesLabel = (item: CartItem): string => {
+  if (!item.specialNotes.length) return "-";
+  return item.specialNotes.join(", ");
 };
 
 const compareByCodeThenName = (a: { code?: string | null; name: string }, b: { code?: string | null; name: string }): number => {
@@ -207,6 +227,8 @@ export default function POS() {
   const [itemWidth, setItemWidth] = useState(1);
   const [itemHeight, setItemHeight] = useState(1);
   const [itemNotes, setItemNotes] = useState("");
+  const [selectedSpecialNotes, setSelectedSpecialNotes] = useState<string[]>([]);
+  const [selectedSpecialNoteDraft, setSelectedSpecialNoteDraft] = useState("");
   const [discount, setDiscount] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [amountPaid, setAmountPaid] = useState(0);
@@ -254,7 +276,7 @@ export default function POS() {
   }, [selectedProduct]);
 
   const selectedProductMaterialOption = useMemo(
-    () => productMaterialOptions.find((option) => option.materialId === itemMaterial) ?? productMaterialOptions[0] ?? null,
+    () => productMaterialOptions.find((option) => option.materialId === itemMaterial) ?? null,
     [productMaterialOptions, itemMaterial],
   );
 
@@ -306,6 +328,34 @@ export default function POS() {
       ) ?? null
     );
   }, [selectedProduct, selectedProductMaterialOption, selectedProductVariantId]);
+
+  useEffect(() => {
+    if (!selectedProduct) return;
+    if (productVariantOptions.length !== 1) return;
+    const onlyOption = productVariantOptions[0];
+    if (!onlyOption) return;
+    if (selectedProductVariantId === onlyOption.variantId) return;
+
+    const matchedVariant = selectedProduct.materialVariants.find((variant) => variant.id === onlyOption.variantId) ?? null;
+    setSelectedProductVariantId(onlyOption.variantId);
+    setItemQty(normalizeMinimumOrder(matchedVariant?.minimumOrder ?? selectedProductMaterialOption?.baseVariant?.minimumOrder));
+  }, [selectedProduct, productVariantOptions, selectedProductVariantId, selectedProductMaterialOption]);
+
+  const dialogSourceProduct = useMemo(() => {
+    if (selectedProduct) return selectedProduct;
+    const sourceProductId = selectedService?.productId ?? selectedDisplay?.productId;
+    if (sourceProductId) {
+      return products.find((product) => product.id === sourceProductId) ?? null;
+    }
+    return selectedService?.product ?? selectedDisplay?.product ?? null;
+  }, [selectedProduct, selectedService, selectedDisplay, products]);
+
+  const dialogSpecialNoteOptions = useMemo(() => {
+    if (!dialogSourceProduct?.specialNotesEnabled) return [];
+    return normalizeSpecialNoteList(dialogSourceProduct.specialNotes ?? []);
+  }, [dialogSourceProduct]);
+
+  const isSpecialNotesRequired = Boolean(dialogSourceProduct?.specialNotesEnabled);
 
   const serviceGroups = useMemo(() => {
     const grouped = new Map<ServiceGroupKey, ServiceCatalog[]>();
@@ -452,6 +502,8 @@ export default function POS() {
     setItemWidth(1);
     setItemHeight(1);
     setItemNotes("");
+    setSelectedSpecialNotes([]);
+    setSelectedSpecialNoteDraft("");
   };
 
   const showReadOnlyToast = () => {
@@ -463,10 +515,6 @@ export default function POS() {
       showReadOnlyToast();
       return;
     }
-    const materialOptions = buildProductMaterialOptions(product);
-    const initialMaterialOption = materialOptions[0] ?? null;
-    const initialMaterialId = initialMaterialOption?.materialId ?? "";
-    const initialQty = normalizeMinimumOrder(initialMaterialOption?.baseVariant?.minimumOrder);
     setSelectedProduct(product);
     setSelectedServiceGroup(null);
     setSelectedService(null);
@@ -476,12 +524,14 @@ export default function POS() {
     setSelectedDisplayMaterialId("");
     setSelectedDisplayFinishingId("");
     setSelectedDisplay(null);
-    setItemMaterial(initialMaterialId);
+    setItemMaterial("");
     setSelectedProductVariantId(PRODUCT_VARIANT_UNSELECTED);
-    setItemQty(initialQty);
+    setItemQty(1);
     setItemWidth(1);
     setItemHeight(1);
     setItemNotes("");
+    setSelectedSpecialNotes([]);
+    setSelectedSpecialNoteDraft("");
     setAddItemOpen(true);
   };
 
@@ -593,6 +643,22 @@ export default function POS() {
     setSelectedDisplay(match);
   };
 
+  const addSelectedSpecialNote = (noteRaw: string) => {
+    const note = noteRaw.trim();
+    if (!note) return;
+    const normalized = normalizeSpecialNoteList([...selectedSpecialNotes, note]);
+    if (normalized.length === selectedSpecialNotes.length) {
+      toast.error("Catatan khusus sudah dipilih");
+      return;
+    }
+    setSelectedSpecialNotes(normalized);
+    setSelectedSpecialNoteDraft("");
+  };
+
+  const removeSelectedSpecialNote = (noteToDelete: string) => {
+    setSelectedSpecialNotes((prev) => prev.filter((note) => note.toLowerCase() !== noteToDelete.toLowerCase()));
+  };
+
   const removeFromCart = (id: string) => {
     if (!canProcessTransaction) {
       showReadOnlyToast();
@@ -641,9 +707,21 @@ export default function POS() {
       showReadOnlyToast();
       return;
     }
+    if (isSpecialNotesRequired && dialogSpecialNoteOptions.length === 0) {
+      toast.error("Produk ini belum memiliki opsi Catatan Khusus. Atur dulu di master produk.");
+      return;
+    }
+    if (isSpecialNotesRequired && selectedSpecialNotes.length === 0) {
+      toast.error("Pilih minimal 1 Catatan Khusus untuk item ini");
+      return;
+    }
     if (selectedProduct) {
       if (productMaterialOptions.length === 0) {
         toast.error("Produk tidak memiliki varian bahan aktif");
+        return;
+      }
+      if (!selectedProductMaterialOption) {
+        toast.error("Pilih bahan terlebih dahulu");
         return;
       }
       if (productVariantOptions.length === 0) {
@@ -681,6 +759,7 @@ export default function POS() {
           width: productAreaMode ? itemWidth : undefined,
           height: productAreaMode ? itemHeight : undefined,
           notes: itemNotes,
+          specialNotes: selectedSpecialNotes,
           finishing: false,
           subtotal,
         },
@@ -714,6 +793,7 @@ export default function POS() {
           width: areaMode ? itemWidth : undefined,
           height: areaMode ? itemHeight : undefined,
           notes: itemNotes,
+          specialNotes: selectedSpecialNotes,
           finishing: false,
           subtotal,
         },
@@ -748,6 +828,7 @@ export default function POS() {
           width: areaMode ? itemWidth : undefined,
           height: areaMode ? itemHeight : undefined,
           notes: itemNotes,
+          specialNotes: selectedSpecialNotes,
           finishing: false,
           subtotal,
         },
@@ -785,6 +866,7 @@ export default function POS() {
         itemType: item.itemType,
         material: getCartMaterialLabel(item),
         finishing: getCartFinishingLabel(item),
+        specialNotes: item.specialNotes,
         quantity: item.quantity,
         width: item.width,
         height: item.height,
@@ -823,6 +905,7 @@ export default function POS() {
               width: item.width,
               height: item.height,
               notes: item.notes,
+              specialNotes: item.specialNotes,
               finishing: item.finishing,
             };
           }
@@ -835,6 +918,7 @@ export default function POS() {
               width: item.width,
               height: item.height,
               notes: item.notes,
+              specialNotes: item.specialNotes,
               finishing: false as const,
             };
           }
@@ -846,6 +930,7 @@ export default function POS() {
             width: item.width,
             height: item.height,
             notes: item.notes,
+            specialNotes: item.specialNotes,
             finishing: false as const,
           };
         }),
@@ -988,6 +1073,11 @@ export default function POS() {
                     Bahan: <span className="text-foreground">{getCartMaterialLabel(item)}</span> | Finishing:{" "}
                     <span className="text-foreground">{getCartFinishingLabel(item)}</span>
                   </p>
+                  {item.specialNotes.length > 0 ? (
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Catatan Khusus: <span className="text-foreground">{getCartSpecialNotesLabel(item)}</span>
+                    </p>
+                  ) : null}
                 </div>
                 <button onClick={() => removeFromCart(item.id)} className="p-1 text-destructive/70 hover:text-destructive rounded">
                   <Trash2 className="w-4 h-4" />
@@ -1112,7 +1202,7 @@ export default function POS() {
                 <>
                   <div>
                     <label className="text-sm font-medium text-foreground mb-1.5 block">Bahan</label>
-                    <Select value={itemMaterial} onValueChange={handleSelectProductMaterial}>
+                    <Select value={itemMaterial || undefined} onValueChange={handleSelectProductMaterial}>
                       <SelectTrigger>
                         <SelectValue placeholder="Pilih bahan" />
                       </SelectTrigger>
@@ -1170,6 +1260,54 @@ export default function POS() {
                 </div>
               ) : null}
 
+              {isSpecialNotesRequired ? (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-foreground mb-1.5 block">Catatan Khusus</label>
+                  <div className="grid grid-cols-[1fr_100px] gap-2">
+                    <Select value={selectedSpecialNoteDraft} onValueChange={setSelectedSpecialNoteDraft}>
+                      <SelectTrigger>
+                        <SelectValue
+                          placeholder={
+                            dialogSpecialNoteOptions.length > 0
+                              ? "Pilih catatan khusus..."
+                              : "Produk ini tidak memiliki opsi catatan khusus"
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {dialogSpecialNoteOptions.map((note) => (
+                          <SelectItem key={note} value={note}>
+                            {note}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => addSelectedSpecialNote(selectedSpecialNoteDraft)}
+                      disabled={!selectedSpecialNoteDraft || dialogSpecialNoteOptions.length === 0}
+                    >
+                      Tambah
+                    </Button>
+                  </div>
+                  {selectedSpecialNotes.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {selectedSpecialNotes.map((note) => (
+                        <button
+                          key={note}
+                          type="button"
+                          onClick={() => removeSelectedSpecialNote(note)}
+                          className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/60 px-2.5 py-1 text-xs text-foreground hover:bg-muted"
+                        >
+                          {note}
+                          <Trash2 className="h-3 w-3 text-muted-foreground" />
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
               <div>
                 <label className="text-sm font-medium text-foreground mb-1.5 block">Catatan</label>
@@ -1314,4 +1452,3 @@ export default function POS() {
     </div>
   );
 }
-

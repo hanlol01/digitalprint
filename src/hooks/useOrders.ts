@@ -24,6 +24,7 @@ export type CreateOrderPayload = {
         width?: number;
         height?: number;
         notes?: string;
+        specialNotes?: string[];
         finishing: boolean;
       }
     | {
@@ -34,6 +35,7 @@ export type CreateOrderPayload = {
         width?: number;
         height?: number;
         notes?: string;
+        specialNotes?: string[];
         finishing?: false;
       }
     | {
@@ -44,6 +46,7 @@ export type CreateOrderPayload = {
         width?: number;
         height?: number;
         notes?: string;
+        specialNotes?: string[];
         finishing?: false;
       }
   >;

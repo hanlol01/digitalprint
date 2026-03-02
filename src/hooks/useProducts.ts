@@ -19,6 +19,8 @@ type ProductApi = {
   hasCustomSize: boolean;
   customWidth: number | null;
   customHeight: number | null;
+  specialNotesEnabled: boolean;
+  specialNotes: string[];
   finishingCost: number;
   estimatedMinutes: number;
   isActive: boolean;
@@ -88,6 +90,8 @@ const mapProduct = (product: ProductApi): Product => ({
   hasCustomSize: product.hasCustomSize,
   customWidth: product.customWidth,
   customHeight: product.customHeight,
+  specialNotesEnabled: product.specialNotesEnabled ?? false,
+  specialNotes: product.specialNotes ?? [],
   finishingCost: product.finishingCost,
   estimatedMinutes: product.estimatedMinutes,
   isActive: product.isActive,
@@ -148,6 +152,8 @@ export type ProductPayload = {
   hasCustomSize: boolean;
   customWidth?: number;
   customHeight?: number;
+  specialNotesEnabled: boolean;
+  specialNotes: string[];
   finishingCost: number;
   estimatedMinutes: number;
   isActive?: boolean;

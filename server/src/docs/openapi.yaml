@@ -26,6 +26,13 @@ paths:
       responses:
         "200":
           description: Data pengguna
+  /auth/profile:
+    patch:
+      tags: [Auth]
+      summary: Perbarui profil pengguna aktif
+      responses:
+        "200":
+          description: Profil diperbarui
   /auth/ganti-password:
     patch:
       tags: [Auth]

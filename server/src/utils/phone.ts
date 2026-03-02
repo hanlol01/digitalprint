@@ -1,20 +1,18 @@
-const ONLY_DIGITS_REGEX = /\D/g;
+import { ApiError } from "./api-error";
 
-export const normalizePhoneNumber = (value: string): string => {
-  let digits = value.replace(ONLY_DIGITS_REGEX, "");
+export const normalizePhone = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  const digits = value.replace(/\D/g, "");
+  return digits || null;
+};
 
-  // Indonesia format normalization:
-  // 62xxxxxxxxxx -> 0xxxxxxxxxx
-  // 8xxxxxxxxxx  -> 08xxxxxxxxx
-  if (digits.startsWith("62")) {
-    digits = `0${digits.slice(2)}`;
-  } else if (digits.startsWith("8")) {
-    digits = `0${digits}`;
+export const assertValidPhone = (value: string | null): void => {
+  if (!value) return;
+  if (!/^\d+$/.test(value)) {
+    throw new ApiError(400, "Nomor WhatsApp hanya boleh angka");
   }
-
-  return digits;
 };
 
-export const isValidPhoneNumber = (value: string): boolean => {
-  return /^0\d{8,14}$/.test(value);
-};
+export const normalizePhoneNumber = (value: string | null | undefined): string => normalizePhone(value) ?? "";
+
+export const isValidPhoneNumber = (value: string): boolean => /^\d+$/.test(value.replace(/\D/g, ""));

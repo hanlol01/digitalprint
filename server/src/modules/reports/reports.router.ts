@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { OrderStatus, Prisma, TransactionItemType } from "@prisma/client";
+import { OrderStatus, PaymentMethod, Prisma, TransactionItemType } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { asyncHandler } from "../../utils/async-handler";
 import { sendSuccess } from "../../utils/response";
@@ -14,6 +14,14 @@ const parseItemTypeQuery = (value: string): TransactionItemType | undefined => {
   return Object.values(TransactionItemType).includes(value as TransactionItemType)
     ? (value as TransactionItemType)
     : undefined;
+};
+
+const parsePaymentMethodQuery = (value: string): PaymentMethod | undefined => {
+  return Object.values(PaymentMethod).includes(value as PaymentMethod) ? (value as PaymentMethod) : undefined;
+};
+
+const parseOrderStatusQuery = (value: string): OrderStatus | undefined => {
+  return Object.values(OrderStatus).includes(value as OrderStatus) ? (value as OrderStatus) : undefined;
 };
 
 const getOrderRangeWhere = (startDate?: string, endDate?: string, itemType?: TransactionItemType): Prisma.OrderWhereInput => {
@@ -155,6 +163,81 @@ reportsRouter.get(
       res,
       [...grouped.values()].map(({ orderIds: _orderIds, ...rest }) => rest),
     );
+  }),
+);
+
+reportsRouter.get(
+  "/tabel-transaksi",
+  asyncHandler(async (req, res) => {
+    const startDate = String(req.query.startDate ?? "");
+    const endDate = String(req.query.endDate ?? "");
+    const itemType = parseItemTypeQuery(String(req.query.itemType ?? ""));
+    const paymentMethod = parsePaymentMethodQuery(String(req.query.paymentMethod ?? ""));
+    const status = parseOrderStatusQuery(String(req.query.status ?? ""));
+    const page = Math.max(Number(req.query.page ?? 1), 1);
+    const limit = Math.min(Math.max(Number(req.query.limit ?? 20), 1), 100);
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.OrderWhereInput = {
+      ...getOrderRangeWhere(startDate, endDate, itemType),
+      ...(paymentMethod ? { paymentMethod } : {}),
+      ...(status ? { status } : {}),
+    };
+    const itemWhere: Prisma.OrderItemWhereInput = itemType ? { itemType } : {};
+
+    const [total, orders] = await Promise.all([
+      prisma.order.count({ where }),
+      prisma.order.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          orderNumber: true,
+          createdAt: true,
+          customerName: true,
+          total: true,
+          paymentMethod: true,
+          status: true,
+          items: {
+            where: itemWhere,
+            orderBy: { createdAt: "asc" },
+            select: {
+              itemLabel: true,
+              productName: true,
+              variantName: true,
+              quantity: true,
+              unitPrice: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    const data = orders.map((order) => ({
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      orderDate: order.createdAt.toISOString(),
+      customerName: order.customerName,
+      total: order.total,
+      paymentMethod: order.paymentMethod,
+      status: order.status,
+      items: order.items.map((item) => {
+        const fallbackLabel =
+          item.variantName && item.variantName.trim().length > 0
+            ? `${item.productName} - ${item.variantName}`
+            : item.productName;
+
+        return {
+          itemLabel: item.itemLabel?.trim() ? item.itemLabel : fallbackLabel,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+        };
+      }),
+    }));
+
+    sendSuccess(res, data, { page, limit, total, totalPages: Math.ceil(total / limit) });
   }),
 );
 

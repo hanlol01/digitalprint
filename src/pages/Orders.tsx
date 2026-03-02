@@ -85,6 +85,7 @@ const buildSettlementReceiptData = (order: Order, method: PaymentMethod, paidAmo
     itemType: item.itemType,
     material: getOrderItemMaterialLabel(item),
     finishing: getOrderItemFinishingLabel(item),
+    specialNotes: item.specialNotes ?? [],
     quantity: Number(item.quantity) || 1,
     width: toPositiveNumberOrUndefined(item.width),
     height: toPositiveNumberOrUndefined(item.height),
@@ -131,6 +132,7 @@ const buildDetailReceiptData = (order: Order): ReceiptData => {
       itemType: item.itemType,
       material: getOrderItemMaterialLabel(item),
       finishing: getOrderItemFinishingLabel(item),
+      specialNotes: item.specialNotes ?? [],
       quantity: Number(item.quantity) || 1,
       width: toPositiveNumberOrUndefined(item.width),
       height: toPositiveNumberOrUndefined(item.height),
@@ -793,6 +795,11 @@ export default function Orders() {
                                 Bahan: <span className="text-foreground">{getOrderItemMaterialLabel(item)}</span> | Finishing:{" "}
                                 <span className="text-foreground">{getOrderItemFinishingLabel(item)}</span>
                               </p>
+                              {item.specialNotes?.length ? (
+                                <p className="text-xs text-muted-foreground mt-0.5" data-testid={`item-special-notes-${index}`}>
+                                  Catatan Khusus: <span className="text-foreground">{item.specialNotes.join(", ")}</span>
+                                </p>
+                              ) : null}
                             </div>
                             <p className="text-sm font-bold text-foreground shrink-0 text-right min-w-[120px]" data-testid={`item-subtotal-${index}`}>
                               {formatCurrency(item.subtotal)}

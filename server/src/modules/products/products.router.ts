@@ -36,6 +36,8 @@ const createProductSchema = z.object({
   hasCustomSize: z.boolean().default(false),
   customWidth: z.number().positive().optional(),
   customHeight: z.number().positive().optional(),
+  specialNotesEnabled: z.boolean().default(false),
+  specialNotes: z.array(z.string().max(120)).max(20).default([]),
   finishingCost: z.number().int().nonnegative().default(0),
   estimatedMinutes: z.number().int().nonnegative().default(0),
   isActive: z.boolean().default(true),
@@ -52,6 +54,8 @@ const updateProductSchema = z.object({
   hasCustomSize: z.boolean().optional(),
   customWidth: z.number().positive().optional(),
   customHeight: z.number().positive().optional(),
+  specialNotesEnabled: z.boolean().optional(),
+  specialNotes: z.array(z.string().max(120)).max(20).optional(),
   finishingCost: z.number().int().nonnegative().optional(),
   estimatedMinutes: z.number().int().nonnegative().optional(),
   isActive: z.boolean().optional(),
@@ -84,6 +88,8 @@ const includeProduct = {
 const serializeProduct = (product: Prisma.ProductGetPayload<{ include: typeof includeProduct }>) => {
   return {
     ...product,
+    specialNotesEnabled: product.specialNotesEnabled,
+    specialNotes: product.specialNoteOptions,
     customWidth: product.customWidth ? toNumber(product.customWidth) : null,
     customHeight: product.customHeight ? toNumber(product.customHeight) : null,
     unit: product.unit ?? null,
@@ -100,6 +106,27 @@ const serializeProduct = (product: Prisma.ProductGetPayload<{ include: typeof in
       })),
     })),
   };
+};
+
+const MAX_SPECIAL_NOTES = 20;
+const MAX_SPECIAL_NOTE_LENGTH = 120;
+
+const normalizeSpecialNotes = (notes: string[]): string[] => {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const rawNote of notes) {
+    const note = rawNote.trim();
+    if (!note) continue;
+    const clipped = note.slice(0, MAX_SPECIAL_NOTE_LENGTH);
+    const key = clipped.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(clipped);
+    if (normalized.length >= MAX_SPECIAL_NOTES) break;
+  }
+
+  return normalized;
 };
 
 productsRouter.get(
@@ -162,8 +189,13 @@ productsRouter.post(
   validateBody(createProductSchema),
   asyncHandler(async (req, res) => {
     const body = req.body as z.infer<typeof createProductSchema>;
+    const normalizedSpecialNotes = normalizeSpecialNotes(body.specialNotes ?? []);
+
     if (body.hasCustomSize && (!body.customWidth || !body.customHeight)) {
       throw new ApiError(400, "Panjang dan lebar kustom wajib diisi jika ukuran kustom aktif");
+    }
+    if (body.specialNotesEnabled && normalizedSpecialNotes.length === 0) {
+      throw new ApiError(400, "Tambahkan minimal 1 opsi Catatan Khusus saat fitur diaktifkan");
     }
     const materialIds = [...new Set(body.variants.map((variant) => variant.materialId))];
     const materials = await prisma.material.findMany({
@@ -200,6 +232,8 @@ productsRouter.post(
           hasCustomSize: body.hasCustomSize,
           customWidth: body.hasCustomSize ? body.customWidth : null,
           customHeight: body.hasCustomSize ? body.customHeight : null,
+          specialNotesEnabled: body.specialNotesEnabled,
+          specialNoteOptions: normalizedSpecialNotes,
           finishingCost: body.finishingCost,
           estimatedMinutes: body.estimatedMinutes,
           isActive: body.isActive,
@@ -267,8 +301,16 @@ productsRouter.patch(
     const hasCustomSize = body.hasCustomSize ?? existing.hasCustomSize;
     const customWidth = body.customWidth ?? toNumber(existing.customWidth);
     const customHeight = body.customHeight ?? toNumber(existing.customHeight);
+    const normalizedSpecialNotes =
+      body.specialNotes !== undefined
+        ? normalizeSpecialNotes(body.specialNotes)
+        : normalizeSpecialNotes(existing.specialNoteOptions);
+    const specialNotesEnabled = body.specialNotesEnabled ?? existing.specialNotesEnabled;
     if (hasCustomSize && (!customWidth || !customHeight)) {
       throw new ApiError(400, "Panjang dan lebar kustom wajib diisi jika ukuran kustom aktif");
+    }
+    if (specialNotesEnabled && normalizedSpecialNotes.length === 0) {
+      throw new ApiError(400, "Tambahkan minimal 1 opsi Catatan Khusus saat fitur diaktifkan");
     }
     let materialPriceMap: Map<string, { costPrice: number; sellingPrice: number }> = new Map();
     if (body.variants) {
@@ -298,6 +340,8 @@ productsRouter.patch(
             body.hasCustomSize === false ? null : body.customWidth,
           customHeight:
             body.hasCustomSize === false ? null : body.customHeight,
+          specialNotesEnabled: body.specialNotesEnabled,
+          specialNoteOptions: body.specialNotes !== undefined ? normalizedSpecialNotes : undefined,
           finishingCost: body.finishingCost,
           estimatedMinutes: body.estimatedMinutes,
           isActive: body.isActive,

@@ -37,6 +37,7 @@ const orderItemSchema = z.object({
   width: z.number().positive().optional(),
   height: z.number().positive().optional(),
   notes: z.string().max(250).optional(),
+  specialNotes: z.array(z.string().max(120)).max(20).optional(),
   finishing: z.boolean().default(false),
 });
 
@@ -81,6 +82,55 @@ const serializeOrder = (order: Prisma.OrderGetPayload<{ include: typeof orderInc
 });
 
 const resolveItemType = (item: z.infer<typeof orderItemSchema>): TransactionItemType => item.itemType ?? TransactionItemType.produk;
+const normalizeOrderItemSpecialNotes = (notes?: string[]): string[] => {
+  if (!notes?.length) return [];
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const rawNote of notes) {
+    const note = rawNote.trim();
+    if (!note) continue;
+    const key = note.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(note.slice(0, 120));
+    if (normalized.length >= 20) break;
+  }
+  return normalized;
+};
+const resolveValidatedSpecialNotes = (
+  notes: string[] | undefined,
+  config: { enabled: boolean; options: string[]; productName: string },
+): string[] => {
+  const normalized = normalizeOrderItemSpecialNotes(notes);
+  if (!config.enabled) {
+    return [];
+  }
+
+  const optionMap = new Map<string, string>();
+  for (const rawOption of config.options) {
+    const option = rawOption.trim();
+    if (!option) continue;
+    const key = option.toLowerCase();
+    if (!optionMap.has(key)) {
+      optionMap.set(key, option.slice(0, 120));
+    }
+  }
+
+  if (optionMap.size === 0) {
+    throw new ApiError(400, `Produk "${config.productName}" belum memiliki opsi Catatan Khusus`);
+  }
+  if (normalized.length === 0) {
+    throw new ApiError(400, `Produk "${config.productName}" wajib memilih minimal 1 Catatan Khusus`);
+  }
+
+  return normalized.map((note) => {
+    const matched = optionMap.get(note.toLowerCase());
+    if (!matched) {
+      throw new ApiError(400, `Catatan Khusus "${note}" tidak valid untuk produk "${config.productName}"`);
+    }
+    return matched;
+  });
+};
 
 const isAreaUnitName = (value: string | null | undefined): boolean => {
   if (!value) return false;
@@ -335,6 +385,7 @@ ordersRouter.post(
       width: number | null;
       height: number | null;
       notes: string;
+      specialNotes: string[];
       finishing: boolean;
       finishingCost: number;
       subtotal: number;
@@ -381,6 +432,11 @@ ordersRouter.post(
 
         const estimatedItemMinutes = variant.product.estimatedMinutes * Math.max(quantity, 1);
         const roundedSubtotal = Math.round(itemSubtotal);
+        const specialNotes = resolveValidatedSpecialNotes(item.specialNotes, {
+          enabled: variant.product.specialNotesEnabled,
+          options: variant.product.specialNoteOptions,
+          productName: variant.product.name,
+        });
 
         itemPayload.push({
           itemType: TransactionItemType.produk,
@@ -399,6 +455,7 @@ ordersRouter.post(
           width: item.width ?? null,
           height: item.height ?? null,
           notes: item.notes ?? "",
+          specialNotes,
           finishing: item.finishing,
           finishingCost: item.finishing ? variant.product.finishingCost : 0,
           subtotal: roundedSubtotal,
@@ -432,6 +489,11 @@ ordersRouter.post(
         const factor = requiresSize ? Number(item.width) * Number(item.height) * quantity : quantity;
         const roundedSubtotal = Math.round(factor * service.sellingPrice);
         const estimatedItemMinutes = service.product.estimatedMinutes * Math.max(quantity, 1);
+        const specialNotes = resolveValidatedSpecialNotes(item.specialNotes, {
+          enabled: service.product.specialNotesEnabled,
+          options: service.product.specialNoteOptions,
+          productName: service.product.name,
+        });
 
         itemPayload.push({
           itemType: TransactionItemType.jasa,
@@ -450,6 +512,7 @@ ordersRouter.post(
           width: item.width ?? null,
           height: item.height ?? null,
           notes: item.notes ?? "",
+          specialNotes,
           finishing: false,
           finishingCost: 0,
           subtotal: roundedSubtotal,
@@ -486,6 +549,11 @@ ordersRouter.post(
       const factor = requiresSize ? Number(item.width) * Number(item.height) * quantity : quantity;
       const roundedSubtotal = Math.round(factor * display.sellingPrice);
       const estimatedItemMinutes = display.product.estimatedMinutes * Math.max(quantity, 1);
+      const specialNotes = resolveValidatedSpecialNotes(item.specialNotes, {
+        enabled: display.product.specialNotesEnabled,
+        options: display.product.specialNoteOptions,
+        productName: display.product.name,
+      });
 
       itemPayload.push({
         itemType: TransactionItemType.display,
@@ -504,6 +572,7 @@ ordersRouter.post(
         width: item.width ?? null,
         height: item.height ?? null,
         notes: item.notes ?? "",
+        specialNotes,
         finishing: false,
         finishingCost: 0,
         subtotal: roundedSubtotal,
@@ -599,6 +668,7 @@ ordersRouter.post(
             width: item.width,
             height: item.height,
             notes: item.notes,
+            specialNotes: item.specialNotes,
             finishing: item.finishing,
             finishingCost: item.finishingCost,
             subtotal: item.subtotal,

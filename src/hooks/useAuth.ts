@@ -7,8 +7,10 @@ const authKey = ["auth", "me"] as const;
 export interface AuthUser {
   id: string;
   username: string;
+  fullName: string | null;
+  address: string | null;
+  phone: string | null;
   role: UserRole;
-  mustChangePassword: boolean;
 }
 
 export const useMe = () => {
@@ -34,5 +36,16 @@ export const useChangePassword = () => {
   return useMutation({
     mutationFn: (payload: { oldPassword: string; newPassword: string }) =>
       patchData<{ message: string }, { oldPassword: string; newPassword: string }>("/auth/ganti-password", payload),
+  });
+};
+
+export const useUpdateProfile = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { fullName?: string; address?: string; phone?: string }) =>
+      patchData<AuthUser, { fullName?: string; address?: string; phone?: string }>("/auth/profile", payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: authKey });
+    },
   });
 };

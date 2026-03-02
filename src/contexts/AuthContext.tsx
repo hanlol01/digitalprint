@@ -5,8 +5,10 @@ import type { UserRole } from "@/types";
 type AuthUser = {
   id: string;
   username: string;
+  fullName: string | null;
+  address: string | null;
+  phone: string | null;
   role: UserRole;
-  mustChangePassword: boolean;
 };
 
 type LoginPayload = {
