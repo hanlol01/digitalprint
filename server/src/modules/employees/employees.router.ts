@@ -49,7 +49,7 @@ const serializeEmployee = (
 
 const employeesRouter = Router();
 employeesRouter.use(authenticate);
-employeesRouter.use(authorizeRoles("management"));
+employeesRouter.use(authorizeRoles("admin", "management"));
 
 employeesRouter.get(
   "/",

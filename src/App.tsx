@@ -48,7 +48,7 @@ const App = () => (
                   <Route path="/master-data/frames" element={<MasterDataPage type="frames" />} />
                 </Route>
 
-                <Route element={<ProtectedRoute allowedRoles={["management"]} />}>
+                <Route element={<ProtectedRoute allowedRoles={["admin", "management"]} />}>
                   <Route path="/master-data/employees" element={<Employees />} />
                 </Route>
 

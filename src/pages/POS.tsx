@@ -35,6 +35,18 @@ const isAreaUnitName = (value?: string | null): boolean => {
   return unit === "m2" || unit === "cm";
 };
 
+const getDimensionUnitLabel = (value?: string | null): string => {
+  const unit = value?.trim().toLowerCase();
+  if (unit === "m2") return "m";
+  if (unit === "cm" || unit === "cm2") return "cm";
+  return "";
+};
+
+const normalizeAreaDimension = (value?: number): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
+  return Math.max(value, 1);
+};
+
 const sanitizeCategoryIcon = (icon?: string | null): string | null => {
   const value = icon?.trim();
   if (!value) return null;
@@ -65,12 +77,16 @@ const createFallbackProduct = (id: string, name: string, categoryId: string): Pr
 });
 
 const calculateProductSubtotal = (price: number, qty: number, isArea: boolean, width?: number, height?: number): number => {
-  const total = isArea && width && height ? width * height * qty * price : qty * price;
+  const normalizedWidth = normalizeAreaDimension(width);
+  const normalizedHeight = normalizeAreaDimension(height);
+  const total = isArea && normalizedWidth && normalizedHeight ? normalizedWidth * normalizedHeight * qty * price : qty * price;
   return Math.round(total);
 };
 
 const calculateGenericSubtotal = (price: number, qty: number, isArea: boolean, width?: number, height?: number): number => {
-  return Math.round(isArea && width && height ? width * height * qty * price : qty * price);
+  const normalizedWidth = normalizeAreaDimension(width);
+  const normalizedHeight = normalizeAreaDimension(height);
+  return Math.round(isArea && normalizedWidth && normalizedHeight ? normalizedWidth * normalizedHeight * qty * price : qty * price);
 };
 
 const pricingUnitLabel = (unit: string) =>
@@ -683,6 +699,10 @@ export default function POS() {
   const dialogType: TransactionItemType | null = selectedProduct ? "produk" : selectedServiceGroup ? "jasa" : selectedDisplayGroup ? "display" : null;
   const dialogAreaMode =
     dialogType === "produk" ? productAreaMode : dialogType === "jasa" ? isAreaUnitName(selectedService?.unit?.name) : dialogType === "display" ? isAreaUnitName(selectedDisplay?.unit?.name) : false;
+  const dialogAreaUnitName =
+    dialogType === "produk" ? selectedProductUnitName : dialogType === "jasa" ? selectedService?.unit?.name : dialogType === "display" ? selectedDisplay?.unit?.name : undefined;
+  const dialogDimensionUnitLabel = getDimensionUnitLabel(dialogAreaUnitName);
+  const dialogDimensionLabelSuffix = dialogDimensionUnitLabel ? ` (${dialogDimensionUnitLabel})` : "";
   const dialogPrice =
     dialogType === "produk"
       ? selectedProductVariant?.sellingPrice ?? 0
@@ -1250,11 +1270,11 @@ export default function POS() {
               {dialogAreaMode ? (
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-sm font-medium text-foreground mb-1.5 block">Panjang</label>
+                    <label className="text-sm font-medium text-foreground mb-1.5 block">{`Panjang${dialogDimensionLabelSuffix}`}</label>
                     <Input type="number" min={0.1} step={0.1} value={itemWidth} onChange={(e) => setItemWidth(Number(e.target.value))} />
                   </div>
                   <div>
-                    <label className="text-sm font-medium text-foreground mb-1.5 block">Lebar</label>
+                    <label className="text-sm font-medium text-foreground mb-1.5 block">{`Lebar${dialogDimensionLabelSuffix}`}</label>
                     <Input type="number" min={0.1} step={0.1} value={itemHeight} onChange={(e) => setItemHeight(Number(e.target.value))} />
                   </div>
                 </div>

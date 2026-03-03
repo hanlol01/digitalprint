@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import { Check, ChevronsUpDown, DollarSign, Plus, Receipt, TrendingDown, TrendingUp, Trash2, ChevronLeft, ChevronRight, RotateCcw } from "lucide-react";
+import { Check, ChevronsUpDown, DollarSign, Download, Plus, Receipt, TrendingDown, TrendingUp, Trash2, ChevronLeft, ChevronRight, RotateCcw } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import * as XLSX from "xlsx-js-style";
 import { Button } from "@/components/ui/button";
 import { Command, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -151,6 +152,18 @@ export default function Reports() {
     limit: reportTableLimit,
   });
 
+  // Hook khusus untuk export: ambil SEMUA data transaksi sesuai filter (tanpa paginasi)
+  const { data: exportOrderResult, isLoading: isExportLoading } = useReportOrderTable({
+    startDate: tableStartDate || undefined,
+    endDate: tableEndDate || undefined,
+    itemType,
+    paymentMethod: tablePaymentMethod,
+    status: tableStatus,
+    page: 1,
+    limit: 10000,
+  });
+  const exportOrderData = exportOrderResult?.data ?? [];
+
   const createExpense = useCreateExpense();
   const updateExpense = useUpdateExpense();
   const deleteExpense = useDeleteExpense();
@@ -288,6 +301,335 @@ export default function Reports() {
   };
 
   const currentPage = orderTableMeta?.page ?? reportTablePage;
+
+  // ===================== EXPORT TO EXCEL =====================
+  const exportToExcel = () => {
+    if (exportOrderData.length === 0 && expenses.length === 0) {
+      toast.error("Tidak ada data untuk di-export");
+      return;
+    }
+
+    const wb = XLSX.utils.book_new();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const setCellStyle = (ws: any, r: number, c: number, style: any) => {
+      const ref = XLSX.utils.encode_cell({ r, c });
+      if (!ws[ref]) ws[ref] = { v: "", t: "s" };
+      ws[ref].s = style;
+    };
+
+    // ---- Definisi Style ----
+    const border = {
+      top: { style: "thin", color: { rgb: "333333" } },
+      bottom: { style: "thin", color: { rgb: "333333" } },
+      left: { style: "thin", color: { rgb: "333333" } },
+      right: { style: "thin", color: { rgb: "333333" } },
+    };
+
+    const titleStyle = {
+      font: { bold: true, sz: 14, color: { rgb: "1F2937" } },
+      alignment: { horizontal: "center", vertical: "center" },
+    };
+
+    const subtitleStyle = {
+      font: { sz: 10, italic: true, color: { rgb: "4B5563" } },
+      alignment: { horizontal: "center", vertical: "center" },
+    };
+
+    const headerStyle = {
+      font: { bold: true, sz: 10, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: "16A34A" } },
+      alignment: { horizontal: "center", vertical: "center", wrapText: true },
+      border,
+    };
+
+    const cellLeft = {
+      font: { sz: 10 },
+      alignment: { vertical: "center", wrapText: true },
+      border,
+    };
+
+    const cellCenter = {
+      font: { sz: 10 },
+      alignment: { horizontal: "center", vertical: "center", wrapText: true },
+      border,
+    };
+
+    const cellRight = {
+      font: { sz: 10 },
+      alignment: { horizontal: "right", vertical: "center" },
+      border,
+    };
+
+    const cellBold = {
+      font: { bold: true, sz: 10 },
+      alignment: { vertical: "center", wrapText: true },
+      border,
+    };
+
+    const totalLabelStyle = {
+      font: { bold: true, sz: 11, color: { rgb: "1F2937" } },
+      alignment: { horizontal: "right", vertical: "center" },
+      fill: { fgColor: { rgb: "D1FAE5" } },
+      border,
+    };
+
+    const totalValueStyle = {
+      font: { bold: true, sz: 11, color: { rgb: "1F2937" } },
+      alignment: { horizontal: "right", vertical: "center" },
+      fill: { fgColor: { rgb: "D1FAE5" } },
+      border,
+    };
+
+    const totalEmptyStyle = {
+      font: { sz: 10 },
+      fill: { fgColor: { rgb: "D1FAE5" } },
+      border,
+    };
+
+    // ---- Label tanggal & filter ----
+    const txDateLabel =
+      tableStartDate && tableEndDate
+        ? `Periode: ${formatShortDate(tableStartDate)} s/d ${formatShortDate(tableEndDate)}`
+        : "Semua Periode";
+
+    const filterParts: string[] = [];
+    if (tablePaymentMethod !== "all") filterParts.push(`Cara Bayar: ${PAYMENT_METHOD_LABELS[tablePaymentMethod]}`);
+    if (tableStatus !== "all") filterParts.push(`Status: ${ORDER_STATUS_CONFIG[tableStatus]?.label}`);
+    const filterLabel = filterParts.length > 0 ? `Filter: ${filterParts.join("  |  ")}` : "";
+
+    const periodLabels: Record<Period, string> = {
+      harian: "Hari Ini",
+      mingguan: "Minggu Ini",
+      bulanan: "Bulan Ini",
+      custom:
+        startDate && endDate
+          ? `${formatShortDate(startDate)} s/d ${formatShortDate(endDate)}`
+          : "Custom",
+    };
+    const expDateLabel = `Periode: ${periodLabels[period]}`;
+
+    // =============== SHEET 1: TRANSAKSI ===============
+    const txCols = 10;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const txAoa: any[][] = [];
+    const txMerges: { s: { r: number; c: number }; e: { r: number; c: number } }[] = [];
+
+    // Baris 0: Judul
+    txAoa.push(["LAPORAN TRANSAKSI", ...Array(txCols - 1).fill("")]);
+    txMerges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: txCols - 1 } });
+
+    // Baris 1: Periode
+    txAoa.push([txDateLabel, ...Array(txCols - 1).fill("")]);
+    txMerges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: txCols - 1 } });
+
+    // Baris 2: Filter (jika ada)
+    if (filterLabel) {
+      txAoa.push([filterLabel, ...Array(txCols - 1).fill("")]);
+      txMerges.push({ s: { r: 2, c: 0 }, e: { r: 2, c: txCols - 1 } });
+    }
+
+    // Baris kosong pemisah
+    txAoa.push(Array(txCols).fill(""));
+
+    // Baris header tabel
+    const txHeaderRow = txAoa.length;
+    txAoa.push(["No", "No Order", "Tanggal", "Nama Customer", "Item / Produk", "Qty", "Harga Satuan", "Total Order", "Metode Bayar", "Status"]);
+
+    // Baris data
+    const txDataStart = txAoa.length;
+    let grandTotal = 0;
+
+    exportOrderData.forEach((order, orderIndex) => {
+      const items = order.items.length > 0 ? order.items : [null];
+      const orderStartRow = txAoa.length;
+
+      items.forEach((item, idx) => {
+        txAoa.push([
+          idx === 0 ? orderIndex + 1 : "",
+          idx === 0 ? order.orderNumber : "",
+          idx === 0 ? formatShortDate(order.orderDate) : "",
+          idx === 0 ? order.customerName : "",
+          item ? item.itemLabel : "-",
+          item ? item.quantity : "",
+          item ? formatCurrency(item.unitPrice) : "",
+          idx === 0 ? formatCurrency(order.total) : "",
+          idx === 0 ? (PAYMENT_METHOD_LABELS[order.paymentMethod] ?? order.paymentMethod) : "",
+          idx === 0 ? (ORDER_STATUS_CONFIG[order.status]?.label ?? order.status) : "",
+        ]);
+      });
+
+      // Merge cells untuk order dengan banyak item
+      if (items.length > 1) {
+        const endRow = orderStartRow + items.length - 1;
+        [0, 1, 2, 3, 7, 8, 9].forEach((c) => {
+          txMerges.push({ s: { r: orderStartRow, c }, e: { r: endRow, c } });
+        });
+      }
+
+      grandTotal += order.total;
+    });
+
+    // Baris grand total
+    const txTotalRow = txAoa.length;
+    txAoa.push(["GRAND TOTAL", "", "", "", "", "", "", formatCurrency(grandTotal), "", ""]);
+    txMerges.push({ s: { r: txTotalRow, c: 0 }, e: { r: txTotalRow, c: 6 } });
+    txMerges.push({ s: { r: txTotalRow, c: 8 }, e: { r: txTotalRow, c: 9 } });
+
+    // Buat worksheet transaksi
+    const ws1 = XLSX.utils.aoa_to_sheet(txAoa);
+    ws1["!merges"] = txMerges;
+    ws1["!cols"] = [
+      { wch: 6 },  // No
+      { wch: 22 }, // No Order
+      { wch: 12 }, // Tanggal
+      { wch: 24 }, // Nama Customer
+      { wch: 36 }, // Item / Produk
+      { wch: 8 },  // Qty
+      { wch: 18 }, // Harga Satuan
+      { wch: 18 }, // Total Order
+      { wch: 15 }, // Metode Bayar
+      { wch: 18 }, // Status
+    ];
+
+    // Set row heights
+    ws1["!rows"] = [];
+    ws1["!rows"][0] = { hpt: 28 };
+    ws1["!rows"][1] = { hpt: 18 };
+    if (filterLabel) ws1["!rows"][2] = { hpt: 18 };
+    ws1["!rows"][txHeaderRow] = { hpt: 24 };
+
+    // Terapkan style: judul
+    setCellStyle(ws1, 0, 0, titleStyle);
+    // Terapkan style: subtitle (periode)
+    setCellStyle(ws1, 1, 0, subtitleStyle);
+    // Terapkan style: filter
+    if (filterLabel) setCellStyle(ws1, 2, 0, subtitleStyle);
+
+    // Terapkan style: header
+    for (let c = 0; c < txCols; c++) {
+      setCellStyle(ws1, txHeaderRow, c, headerStyle);
+    }
+
+    // Terapkan style: data rows
+    for (let r = txDataStart; r < txTotalRow; r++) {
+      for (let c = 0; c < txCols; c++) {
+        let style = cellLeft;
+        if (c === 0) style = cellCenter;       // No - center
+        if (c === 1) style = cellBold;         // No Order - bold
+        if (c === 2) style = cellCenter;       // Tanggal - center
+        if (c === 5) style = cellCenter;       // Qty - center
+        if (c === 6 || c === 7) style = cellRight; // Harga, Total - right
+        if (c === 8) style = cellCenter;       // Metode - center
+        if (c === 9) style = cellCenter;       // Status - center
+        setCellStyle(ws1, r, c, style);
+      }
+    }
+
+    // Terapkan style: total row
+    for (let c = 0; c < txCols; c++) {
+      if (c === 0) {
+        setCellStyle(ws1, txTotalRow, c, totalLabelStyle);
+      } else if (c === 7) {
+        setCellStyle(ws1, txTotalRow, c, totalValueStyle);
+      } else {
+        setCellStyle(ws1, txTotalRow, c, totalEmptyStyle);
+      }
+    }
+
+    XLSX.utils.book_append_sheet(wb, ws1, "Transaksi");
+
+    // =============== SHEET 2: PENGELUARAN ===============
+    const expCols = 4;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const expAoa: any[][] = [];
+    const expMerges: { s: { r: number; c: number }; e: { r: number; c: number } }[] = [];
+
+    // Baris 0: Judul
+    expAoa.push(["LAPORAN PENGELUARAN", ...Array(expCols - 1).fill("")]);
+    expMerges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: expCols - 1 } });
+
+    // Baris 1: Periode
+    expAoa.push([expDateLabel, ...Array(expCols - 1).fill("")]);
+    expMerges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: expCols - 1 } });
+
+    // Baris kosong pemisah
+    expAoa.push(Array(expCols).fill(""));
+
+    // Baris header
+    const expHeaderRow = expAoa.length;
+    expAoa.push(["Tanggal", "Kategori", "Keterangan", "Jumlah (Rp)"]);
+
+    // Baris data
+    const expDataStart = expAoa.length;
+    let expTotal = 0;
+    expenses.forEach((exp) => {
+      expAoa.push([
+        new Date(exp.date).toLocaleDateString("id-ID"),
+        exp.category,
+        exp.description,
+        formatCurrency(exp.amount),
+      ]);
+      expTotal += exp.amount;
+    });
+
+    // Baris total
+    const expTotalRow = expAoa.length;
+    expAoa.push(["TOTAL", "", "", formatCurrency(expTotal)]);
+    expMerges.push({ s: { r: expTotalRow, c: 0 }, e: { r: expTotalRow, c: 2 } });
+
+    // Buat worksheet pengeluaran
+    const ws2 = XLSX.utils.aoa_to_sheet(expAoa);
+    ws2["!merges"] = expMerges;
+    ws2["!cols"] = [
+      { wch: 18 },  // Tanggal
+      { wch: 22 },  // Kategori
+      { wch: 42 },  // Keterangan
+      { wch: 22 },  // Jumlah
+    ];
+
+    ws2["!rows"] = [];
+    ws2["!rows"][0] = { hpt: 28 };
+    ws2["!rows"][1] = { hpt: 18 };
+    ws2["!rows"][expHeaderRow] = { hpt: 24 };
+
+    // Terapkan style: judul & subtitle
+    setCellStyle(ws2, 0, 0, titleStyle);
+    setCellStyle(ws2, 1, 0, subtitleStyle);
+
+    // Terapkan style: header
+    for (let c = 0; c < expCols; c++) {
+      setCellStyle(ws2, expHeaderRow, c, headerStyle);
+    }
+
+    // Terapkan style: data rows
+    for (let r = expDataStart; r < expTotalRow; r++) {
+      for (let c = 0; c < expCols; c++) {
+        let style = cellLeft;
+        if (c === 0) style = cellCenter; // Tanggal - center
+        if (c === 3) style = cellRight;  // Jumlah - right
+        setCellStyle(ws2, r, c, style);
+      }
+    }
+
+    // Terapkan style: total row
+    for (let c = 0; c < expCols; c++) {
+      if (c === 0) {
+        setCellStyle(ws2, expTotalRow, c, totalLabelStyle);
+      } else if (c === 3) {
+        setCellStyle(ws2, expTotalRow, c, totalValueStyle);
+      } else {
+        setCellStyle(ws2, expTotalRow, c, totalEmptyStyle);
+      }
+    }
+
+    XLSX.utils.book_append_sheet(wb, ws2, "Pengeluaran");
+
+    // Simpan file
+    const fileName = `Laporan_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    XLSX.writeFile(wb, fileName);
+    toast.success("File Excel berhasil di-download!");
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -467,6 +809,19 @@ export default function Reports() {
           </div>
         </>
       ) : null}
+
+      {/* ===================== TOMBOL EXPORT TO EXCEL ===================== */}
+      <div className="flex justify-end" data-testid="export-section">
+        <Button
+          data-testid="export-excel-btn"
+          onClick={exportToExcel}
+          disabled={isExportLoading}
+          className="gap-2 bg-green-600 hover:bg-green-700 text-white shadow-sm"
+        >
+          <Download className="w-4 h-4" />
+          {isExportLoading ? "Memuat data..." : "Export to Excel"}
+        </Button>
+      </div>
 
       {/* ===================== TRANSACTION TABLE ===================== */}
       <div className="stat-card">

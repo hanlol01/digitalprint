@@ -38,7 +38,7 @@ const masterDataItems = [
   { to: '/master-data/finishings', icon: Briefcase, label: 'Finishing' },
   { to: '/master-data/materials', icon: Warehouse, label: 'Material Jasa' },
   { to: '/master-data/frames', icon: PanelsTopLeft, label: 'Rangka' },
-  { to: '/master-data/employees', icon: Users, label: 'Karyawan', allowedRoles: ['management'] },
+  { to: '/master-data/employees', icon: Users, label: 'Karyawan', allowedRoles: ['admin', 'management'] },
 ];
 
 const secondaryNavItems = [
