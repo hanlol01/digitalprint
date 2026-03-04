@@ -13,6 +13,11 @@ const sanitizeCategoryIcon = (icon?: string | null): string | null => {
   return value.toLowerCase() === "box" ? null : value;
 };
 
+const normalizeDimensionForPricing = (value: number): number => {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  return value < 1 ? 1 : value;
+};
+
 export default function CalculatorPage() {
   const { data: categories = [] } = useCategories({ activeOnly: true });
   const { data: products = [] } = useProducts({ activeOnly: true });
@@ -41,11 +46,15 @@ export default function CalculatorPage() {
 
   const material = product?.materialVariants.find((item) => item.id === materialId);
   const price = material ? material.sellingPrice : product?.materialVariants[0]?.sellingPrice ?? 0;
+  const effectiveWidth = product?.hasCustomSize ? normalizeDimensionForPricing(width) : width;
+  const effectiveHeight = product?.hasCustomSize ? normalizeDimensionForPricing(height) : height;
+  const areaForPricing = effectiveWidth * effectiveHeight;
+  const isAdjustedSize = product?.hasCustomSize ? width < 1 || height < 1 : false;
 
   let total = 0;
   if (product) {
     if (product.hasCustomSize) {
-      total = width * height * price;
+      total = areaForPricing * price;
     } else {
       total = qty * price;
     }
@@ -146,7 +155,9 @@ export default function CalculatorPage() {
             <p className="text-3xl font-bold text-primary">{formatCurrency(total)}</p>
             {product.hasCustomSize && (
               <p className="text-xs text-muted-foreground mt-2">
-                {width} x {height} = {(width * height).toFixed(2)}
+                {isAdjustedSize
+                  ? `${width} x ${height} -> dihitung ${effectiveWidth} x ${effectiveHeight} = ${areaForPricing.toFixed(2)}`
+                  : `${width} x ${height} = ${areaForPricing.toFixed(2)}`}
               </p>
             )}
             <p className="text-xs text-muted-foreground mt-1">Estimasi produksi: ~{product.estimatedMinutes} menit</p>
