@@ -119,7 +119,10 @@ type ProductMaterialOption = {
 };
 type ProductVariantOption = {
   variantId: string;
+  finishingId: string | null;
+  finishingCode: string | null;
   finishingName: string;
+  isNoFinishing: boolean;
   sellingPrice: number;
   unitName: string | null;
   variantCode: string | null;
@@ -302,7 +305,13 @@ export default function POS() {
       .filter((variant) => variant.materialId === selectedProductMaterialOption.materialId)
       .map((variant) => ({
         variantId: variant.id,
+        finishingId: variant.finishingId ?? null,
+        finishingCode: variant.finishing?.code ?? null,
         finishingName: variant.finishing?.name ?? "Tanpa Finishing",
+        isNoFinishing:
+          !variant.finishingId ||
+          normalizeText(variant.finishing?.code) === NO_LAMINATION_FINISHING_CODE ||
+          normalizeText(variant.finishing?.name).includes("tanpa finishing"),
         sellingPrice: variant.sellingPrice,
         unitName: variant.unit?.name ?? selectedProduct.unit?.name ?? null,
         variantCode: variant.code ?? null,
@@ -335,15 +344,21 @@ export default function POS() {
     });
   }, [selectedProduct, selectedProductMaterialOption]);
 
+  const resolvedProductVariantId = useMemo(() => {
+    if (selectedProductVariantId !== PRODUCT_VARIANT_UNSELECTED) return selectedProductVariantId;
+    if (productVariantOptions.length === 1) return productVariantOptions[0]?.variantId ?? PRODUCT_VARIANT_UNSELECTED;
+    return PRODUCT_VARIANT_UNSELECTED;
+  }, [selectedProductVariantId, productVariantOptions]);
+
   const selectedProductVariant = useMemo(() => {
     if (!selectedProduct || !selectedProductMaterialOption) return null;
-    if (selectedProductVariantId === PRODUCT_VARIANT_UNSELECTED) return null;
+    if (resolvedProductVariantId === PRODUCT_VARIANT_UNSELECTED) return null;
     return (
       selectedProduct.materialVariants.find(
-        (variant) => variant.id === selectedProductVariantId && variant.materialId === selectedProductMaterialOption.materialId,
+        (variant) => variant.id === resolvedProductVariantId && variant.materialId === selectedProductMaterialOption.materialId,
       ) ?? null
     );
-  }, [selectedProduct, selectedProductMaterialOption, selectedProductVariantId]);
+  }, [selectedProduct, selectedProductMaterialOption, resolvedProductVariantId]);
 
   useEffect(() => {
     if (!selectedProduct) return;
@@ -356,6 +371,12 @@ export default function POS() {
     setSelectedProductVariantId(onlyOption.variantId);
     setItemQty(normalizeMinimumOrder(matchedVariant?.minimumOrder ?? selectedProductMaterialOption?.baseVariant?.minimumOrder));
   }, [selectedProduct, productVariantOptions, selectedProductVariantId, selectedProductMaterialOption]);
+
+  const shouldHideProductFinishingField = useMemo(() => {
+    if (!selectedProduct || !itemMaterial) return false;
+    if (productVariantOptions.length !== 1) return false;
+    return Boolean(productVariantOptions[0]?.isNoFinishing);
+  }, [selectedProduct, itemMaterial, productVariantOptions]);
 
   const dialogSourceProduct = useMemo(() => {
     if (selectedProduct) return selectedProduct;
@@ -748,7 +769,7 @@ export default function POS() {
         toast.error("Varian untuk bahan ini tidak tersedia");
         return;
       }
-      if (selectedProductVariantId === PRODUCT_VARIANT_UNSELECTED) {
+      if (resolvedProductVariantId === PRODUCT_VARIANT_UNSELECTED) {
         toast.error("Pilih varian terlebih dahulu");
         return;
       }
@@ -1235,25 +1256,27 @@ export default function POS() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div>
-                    <label className="text-sm font-medium text-foreground mb-1.5 block">Tambah Finishing</label>
-                    <Select
-                      value={selectedProductVariantId === PRODUCT_VARIANT_UNSELECTED ? undefined : selectedProductVariantId}
-                      onValueChange={handleSelectProductVariant}
-                      disabled={productVariantOptions.length === 0}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Pilih varian finishing/satuan" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {productVariantOptions.map((option) => (
-                          <SelectItem key={option.variantId} value={option.variantId}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  {!shouldHideProductFinishingField ? (
+                    <div>
+                      <label className="text-sm font-medium text-foreground mb-1.5 block">Tambah Finishing</label>
+                      <Select
+                        value={resolvedProductVariantId === PRODUCT_VARIANT_UNSELECTED ? undefined : resolvedProductVariantId}
+                        onValueChange={handleSelectProductVariant}
+                        disabled={productVariantOptions.length === 0}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Pilih varian finishing/satuan" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {productVariantOptions.map((option) => (
+                            <SelectItem key={option.variantId} value={option.variantId}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : null}
                 </>
               ) : null}
 
@@ -1280,11 +1303,22 @@ export default function POS() {
                 </div>
               ) : null}
 
+              <div>
+                <label className="text-sm font-medium text-foreground mb-1.5 block">Catatan</label>
+                <Textarea value={itemNotes} onChange={(e) => setItemNotes(e.target.value)} rows={2} className="min-h-[56px]" />
+              </div>
+
               {isSpecialNotesRequired ? (
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-foreground mb-1.5 block">Catatan Khusus</label>
-                  <div className="grid grid-cols-[1fr_100px] gap-2">
-                    <Select value={selectedSpecialNoteDraft} onValueChange={setSelectedSpecialNoteDraft}>
+                  <div>
+                    <Select
+                      value={selectedSpecialNoteDraft}
+                      onValueChange={(value) => {
+                        setSelectedSpecialNoteDraft(value);
+                        addSelectedSpecialNote(value);
+                      }}
+                    >
                       <SelectTrigger>
                         <SelectValue
                           placeholder={
@@ -1302,14 +1336,6 @@ export default function POS() {
                         ))}
                       </SelectContent>
                     </Select>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => addSelectedSpecialNote(selectedSpecialNoteDraft)}
-                      disabled={!selectedSpecialNoteDraft || dialogSpecialNoteOptions.length === 0}
-                    >
-                      Tambah
-                    </Button>
                   </div>
                   {selectedSpecialNotes.length > 0 ? (
                     <div className="flex flex-wrap gap-2">
@@ -1328,11 +1354,6 @@ export default function POS() {
                   ) : null}
                 </div>
               ) : null}
-
-              <div>
-                <label className="text-sm font-medium text-foreground mb-1.5 block">Catatan</label>
-                <Textarea value={itemNotes} onChange={(e) => setItemNotes(e.target.value)} rows={2} />
-              </div>
 
               <div className="bg-muted/50 rounded-lg p-3 text-sm">
                 <div className="flex justify-between">
