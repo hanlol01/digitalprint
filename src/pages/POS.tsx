@@ -1303,11 +1303,6 @@ export default function POS() {
                 </div>
               ) : null}
 
-              <div>
-                <label className="text-sm font-medium text-foreground mb-1.5 block">Catatan</label>
-                <Textarea value={itemNotes} onChange={(e) => setItemNotes(e.target.value)} rows={2} className="min-h-[56px]" />
-              </div>
-
               {isSpecialNotesRequired ? (
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-foreground mb-1.5 block">Catatan Khusus</label>
@@ -1354,6 +1349,11 @@ export default function POS() {
                   ) : null}
                 </div>
               ) : null}
+
+              <div>
+                <label className="text-sm font-medium text-foreground mb-1.5 block">Catatan</label>
+                <Textarea value={itemNotes} onChange={(e) => setItemNotes(e.target.value)} rows={2} className="min-h-[56px]" />
+              </div>
 
               <div className="bg-muted/50 rounded-lg p-3 text-sm">
                 <div className="flex justify-between">
