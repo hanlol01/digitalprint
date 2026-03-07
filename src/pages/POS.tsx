@@ -1305,7 +1305,7 @@ export default function POS() {
 
               {isSpecialNotesRequired ? (
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground mb-1.5 block">Catatan Khusus</label>
+                  <label className="text-sm font-medium text-foreground mb-1.5 block">Catatan</label>
                   <div>
                     <Select
                       value={selectedSpecialNoteDraft}
@@ -1318,7 +1318,7 @@ export default function POS() {
                         <SelectValue
                           placeholder={
                             dialogSpecialNoteOptions.length > 0
-                              ? "Pilih catatan khusus..."
+                              ? "Pilih catatan..."
                               : "Produk ini tidak memiliki opsi catatan khusus"
                           }
                         />
@@ -1351,7 +1351,7 @@ export default function POS() {
               ) : null}
 
               <div>
-                <label className="text-sm font-medium text-foreground mb-1.5 block">Catatan</label>
+                <label className="text-sm font-medium text-foreground mb-1.5 block">Catatan Khusus</label>
                 <Textarea value={itemNotes} onChange={(e) => setItemNotes(e.target.value)} rows={2} className="min-h-[56px]" />
               </div>
 
