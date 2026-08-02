@@ -1,0 +1,57 @@
+services:
+  # Frontend Service (React/Vite)
+  frontend:
+    build:
+      context: .
+      dockerfile: src/dockerfile
+    container_name: bizprint-frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_BASE_URL=http://localhost:4000/api/v1
+    depends_on:
+      - backend
+
+  # Backend Service (Node/Express)
+  backend:
+    build:
+      context: ./server
+      dockerfile: dockerfile
+    container_name: bizprint-backend
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./server:/app
+      - /app/node_modules
+    environment:
+      # Koneksi database menunjuk ke container postgres di bawah
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/bizprint?schema=public
+      - JWT_SECRET=supersecretjwtkey_ganti_ini_di_production
+      - PORT=4000
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Database Service (PostgreSQL)
+  postgres:
+    image: postgres:15-alpine
+    container_name: bizprint-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: bizprint
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
