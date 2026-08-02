@@ -2,6 +2,9 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# Install netcat for waiting on postgres
+RUN apk add --no-cache netcat-openbsd
+
 # Copy package.json and install dependencies
 COPY package*.json ./
 RUN npm install
@@ -13,8 +16,12 @@ RUN npx prisma generate
 # Copy the rest of the application
 COPY . .
 
-# Expose the server port
-EXPOSE 3000
+# Copy and set permissions for entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Run the dev server
-CMD ["npm", "run", "dev"]
+# Expose the server port
+EXPOSE 4000
+
+# Run the entrypoint script
+ENTRYPOINT ["docker-entrypoint.sh"]
